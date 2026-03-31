@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Syne", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --color-bg: #050507;
+  --color-surface: #0e0e14;
+  --color-surface-2: #16161f;
+  --color-border: rgba(255, 255, 255, 0.05);
+  --color-foreground: #f8f8ff;
+  --color-muted-foreground: #88889a;
+
+  --color-tab-b: #60a5fa; /* Banal - Blue */
+  --color-tab-l: #8b5cf6; /* Lacuna - Purple */
+  --color-tab-d: #f43f5e; /* Desconhecimento - Red */
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-foreground font-sans antialiased selection:bg-tab-l/30;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.02'/%3E%3C/svg%3E");
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+.glass {
+  @apply bg-surface/40 backdrop-blur-2xl border border-border;
+}
+
+.neo-card {
+  @apply bg-surface border border-border rounded-[2.5rem] shadow-2xl shadow-black/50 overflow-hidden;
+}
+
+.pb-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full;
+}
+
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap');

@@ -1,0 +1,1307 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { useState, useEffect, useMemo, ReactNode } from 'react';
+import { GoogleGenAI, Type } from "@google/genai";
+import { Capacitor } from '@capacitor/core';
+import { 
+  PlusCircle, 
+  RotateCcw, 
+  List, 
+  Target, 
+  Settings, 
+  Flame, 
+  CheckCircle2, 
+  Trash2, 
+  Search,
+  BrainCircuit,
+  Clock,
+  BarChart3,
+  ArrowLeft,
+  Info,
+  Scan,
+  X,
+  Sparkles,
+  Zap,
+  Share2,
+  Check,
+  Copy,
+  ChevronRight,
+  LayoutGrid,
+  Key
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { cn } from './lib/utils';
+
+// --- Types ---
+type TabType = 'B' | 'L' | 'D';
+type Platform = 'ios' | 'android' | 'web';
+
+interface StudyError {
+  id: number;
+  materia: string;
+  prova?: string;
+  questao: string;
+  descricao?: string;
+  gabarito?: string;
+  tab: TabType;
+  data: string;
+  ts: number;
+  resolved: boolean;
+  revisoes: number[];
+}
+
+interface StreakData {
+  streak: number;
+  lastDate: string;
+}
+
+interface PracticeHistory {
+  id: number;
+  tema: string;
+  materia: string;
+  enunciado: string;
+  acertou: boolean;
+  ts: number;
+}
+
+// --- Constants ---
+const STORE_KEY = 'tab_erros_v3';
+const STREAK_KEY = 'tab_streak_v3';
+const META_KEY = 'tab_meta_v3';
+const PRATICA_KEY = 'tab_pratica_v3';
+
+const REVIEW_INTERVALS: Record<TabType, number[]> = {
+  B: [1],
+  L: [1, 3],
+  D: [1, 3, 7]
+};
+
+// --- AI Service ---
+function getAI() {
+  const savedKey = localStorage.getItem('gemini_api_key');
+  const viteEnvKey = import.meta.env.VITE_GEMINI_API_KEY;
+  
+  // No AI Studio environment, we use either the saved key or the VITE_ env var
+  const apiKey = savedKey || viteEnvKey || "";
+  return new GoogleGenAI({ apiKey });
+}
+
+async function generateQuestion(tema: string, nivel: string = "Médio") {
+  const ai = getAI();
+  const schoolContext = 
+    nivel === "Fácil" ? "Stanford (foco em fundamentos claros e inovação)" :
+    nivel === "Médio" ? "MIT (foco em aplicação técnica e raciocínio lógico)" :
+    "Harvard (foco em complexidade, análise crítica e interdisciplinaridade)";
+
+  const schoolName = nivel === "Fácil" ? "Stanford" : nivel === "Médio" ? "MIT" : "Harvard";
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Crie uma questão de múltipla escolha estilo ENEM sobre: "${tema}". 
+    Nível de dificuldade: ${nivel}.
+    Contexto pedagógico: Estilo ${schoolContext}.
+    A explicação deve ser profunda, didática e refletir o rigor acadêmico da ${schoolName}.
+    Retorne APENAS JSON válido:
+    {
+      "materia": "nome da matéria",
+      "enunciado": "enunciado completo",
+      "alternativas": ["A", "B", "C", "D", "E"],
+      "gabarito": 0,
+      "explicacao": "explicação detalhada e didática do porquê a alternativa está correta e as outras erradas",
+      "conceito": "conceito principal",
+      "dica": "dica para o ENEM",
+      "escola": "${schoolName}"
+    }
+    O gabarito deve ser o índice 0-4 da alternativa correta no array.`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          materia: { type: Type.STRING },
+          enunciado: { type: Type.STRING },
+          alternativas: { type: Type.ARRAY, items: { type: Type.STRING } },
+          gabarito: { type: Type.INTEGER },
+          explicacao: { type: Type.STRING },
+          conceito: { type: Type.STRING },
+          dica: { type: Type.STRING },
+          escola: { type: Type.STRING }
+        },
+        required: ["materia", "enunciado", "alternativas", "gabarito", "explicacao", "conceito", "dica", "escola"]
+      }
+    }
+  });
+  return JSON.parse(response.text || "{}");
+}
+
+async function parseEnemBulk(text: string) {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Analise o seguinte texto que contém uma ou mais questões do ENEM. 
+    Separe cada questão e extraia as informações para uma lista de objetos JSON.
+    Identifique a matéria, o enunciado e crie uma descrição curta.
+    Classifique o erro como 'B' (Banal), 'L' (Lacuna) ou 'D' (Desconhecimento).
+    Retorne APENAS um array JSON válido:
+    [
+      {
+        "materia": "nome da matéria",
+        "questao": "resumo do enunciado ou número da questão",
+        "descricao": "contexto ou explicação curta do erro",
+        "tab": "B" | "L" | "D"
+      }
+    ]
+    Texto: "${text}"`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            materia: { type: Type.STRING },
+            questao: { type: Type.STRING },
+            descricao: { type: Type.STRING },
+            tab: { type: Type.STRING, enum: ["B", "L", "D"] }
+          },
+          required: ["materia", "questao", "descricao", "tab"]
+        }
+      }
+    }
+  });
+  return JSON.parse(response.text || "[]");
+}
+
+// --- Main App Component ---
+export default function App() {
+  const [activeSection, setActiveSection] = useState<'registrar' | 'revisao' | 'lista' | 'pratica' | 'config'>('registrar');
+  const [errors, setErrors] = useState<StudyError[]>([]);
+  const [streak, setStreak] = useState<StreakData>({ streak: 0, lastDate: '' });
+  const [meta, setMeta] = useState<number>(0);
+  const [praticaHist, setPraticaHist] = useState<PracticeHistory[]>([]);
+  const [platform, setPlatform] = useState<Platform>('web');
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [manualApiKey, setManualApiKey] = useState(localStorage.getItem('gemini_api_key') || "");
+  const [showKeyInput, setShowKeyInput] = useState(false);
+
+  // Form state
+  const [formData, setFormData] = useState({
+    materia: '',
+    prova: '',
+    questao: '',
+    descricao: '',
+    gabarito: '',
+    tab: 'B' as TabType
+  });
+
+  // Scanner state
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanInput, setScanInput] = useState('');
+  const [isParsing, setIsParsing] = useState(false);
+  const [scannedResults, setScannedResults] = useState<any[]>([]);
+  const [copied, setCopied] = useState(false);
+
+  // Practice state
+  const [practiceTema, setPracticeTema] = useState('');
+  const [practiceNivel, setPracticeNivel] = useState<'Fácil' | 'Médio' | 'Difícil'>('Médio');
+  const [currentQuestion, setCurrentQuestion] = useState<any>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [selectedAlt, setSelectedAlt] = useState<number | null>(null);
+  const [isTestingKey, setIsTestingKey] = useState(false);
+
+  // Filter state
+  const [filter, setFilter] = useState<string>('todos');
+  const [search, setSearch] = useState('');
+
+  // Detect platform
+  useEffect(() => {
+    const p = Capacitor.getPlatform() as Platform;
+    setPlatform(p);
+    document.body.classList.add(`platform-${p}`);
+
+    const checkKey = async () => {
+      if (window.aistudio?.hasSelectedApiKey) {
+        const has = await window.aistudio.hasSelectedApiKey();
+        setHasApiKey(has);
+      } else if (localStorage.getItem('gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY) {
+        setHasApiKey(true);
+      }
+    };
+    checkKey();
+  }, []);
+
+  const saveManualKey = () => {
+    if (manualApiKey.trim()) {
+      localStorage.setItem('gemini_api_key', manualApiKey.trim());
+      setHasApiKey(true);
+      setShowKeyInput(false);
+      alert("Chave salva com sucesso!");
+    } else {
+      localStorage.removeItem('gemini_api_key');
+      setHasApiKey(false);
+      alert("Chave removida. Usando padrão do sistema.");
+    }
+  };
+
+  const testKey = async () => {
+    setIsTestingKey(true);
+    try {
+      const ai = getAI();
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: "Diga 'OK' se você estiver funcionando.",
+      });
+      if (response.text) {
+        alert("Conexão bem-sucedida! A IA está respondendo corretamente.");
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Erro na conexão. Verifique sua chave e tente novamente.");
+    } finally {
+      setIsTestingKey(false);
+    }
+  };
+
+  // Load data
+  useEffect(() => {
+    const savedErrors = localStorage.getItem(STORE_KEY);
+    if (savedErrors) setErrors(JSON.parse(savedErrors));
+
+    const savedStreak = localStorage.getItem(STREAK_KEY);
+    if (savedStreak) setStreak(JSON.parse(savedStreak));
+
+    const savedMeta = localStorage.getItem(META_KEY);
+    if (savedMeta) setMeta(parseInt(savedMeta));
+
+    const savedPratica = localStorage.getItem(PRATICA_KEY);
+    if (savedPratica) setPraticaHist(JSON.parse(savedPratica));
+  }, []);
+
+  // Persist data
+  useEffect(() => {
+    localStorage.setItem(STORE_KEY, JSON.stringify(errors));
+  }, [errors]);
+
+  useEffect(() => {
+    localStorage.setItem(STREAK_KEY, JSON.stringify(streak));
+  }, [streak]);
+
+  useEffect(() => {
+    localStorage.setItem(PRATICA_KEY, JSON.stringify(praticaHist));
+  }, [praticaHist]);
+
+  // Helper: Proxima Revisão
+  const getProximaRevisao = (item: StudyError) => {
+    const intervals = REVIEW_INTERVALS[item.tab] || [1];
+    const revisoes = item.revisoes || [];
+    const idx = Math.min(revisoes.length, intervals.length - 1);
+    const interval = intervals[idx];
+    const base = revisoes.length > 0 ? revisoes[revisoes.length - 1] : item.ts;
+    return new Date(base + interval * 86400000);
+  };
+
+  const isDueForReview = (item: StudyError) => {
+    if (item.resolved) return false;
+    if (item.tab === 'B' && item.revisoes.length >= 1) return false;
+    const prox = getProximaRevisao(item);
+    return prox <= new Date();
+  };
+
+  const dueErrors = useMemo(() => errors.filter(isDueForReview), [errors]);
+
+  // Handlers
+  const handleSaveError = () => {
+    if (!formData.materia || !formData.questao) return;
+
+    const now = new Date();
+    const newError: StudyError = {
+      id: Date.now(),
+      ...formData,
+      data: now.toLocaleDateString('pt-BR'),
+      ts: now.getTime(),
+      resolved: false,
+      revisoes: []
+    };
+
+    setErrors([newError, ...errors]);
+    
+    const today = now.toDateString();
+    if (streak.lastDate !== today) {
+      const yesterday = new Date(now.getTime() - 86400000).toDateString();
+      setStreak(prev => ({
+        streak: prev.lastDate === yesterday ? prev.streak + 1 : 1,
+        lastDate: today
+      }));
+    }
+
+    setFormData({ materia: '', prova: '', questao: '', descricao: '', gabarito: '', tab: 'B' });
+    if (window.navigator.vibrate) window.navigator.vibrate(10);
+  };
+
+  const handleToggleResolve = (id: number) => {
+    setErrors(errors.map(e => e.id === id ? { ...e, resolved: !e.resolved } : e));
+    if (window.navigator.vibrate) window.navigator.vibrate(5);
+  };
+
+  const handleScan = async () => {
+    if (!scanInput) return;
+    setIsParsing(true);
+    try {
+      const results = await parseEnemBulk(scanInput);
+      
+      if (activeSection === 'pratica') {
+        if (results.length > 0) {
+          setPracticeTema(results[0].questao || results[0].materia);
+          setIsScanning(false);
+          setScanInput('');
+        }
+        return;
+      }
+
+      if (results.length === 1) {
+        setFormData({
+          ...formData,
+          materia: results[0].materia,
+          questao: results[0].questao,
+          descricao: results[0].descricao,
+          tab: results[0].tab
+        });
+        setIsScanning(false);
+        setScanInput('');
+      } else {
+        setScannedResults(results);
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Erro ao processar. Tente colar o texto novamente.");
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const handleSaveScanned = (item: any) => {
+    const now = new Date();
+    const newError: StudyError = {
+      id: Date.now() + Math.random(),
+      ...item,
+      data: now.toLocaleDateString('pt-BR'),
+      ts: now.getTime(),
+      resolved: false,
+      revisoes: []
+    };
+    setErrors(prev => [newError, ...prev]);
+    setScannedResults(prev => prev.filter(i => i !== item));
+    if (window.navigator.vibrate) window.navigator.vibrate(5);
+  };
+
+  const handleShare = async () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Memoris - Método TAB',
+          text: 'Estude com o Método TAB e Memoris!',
+          url: url,
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    } else {
+      navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleReview = (id: number) => {
+    setErrors(errors.map(e => e.id === id ? { ...e, revisoes: [...e.revisoes, Date.now()] } : e));
+    if (window.navigator.vibrate) window.navigator.vibrate(5);
+  };
+
+  const handleDelete = (id: number) => {
+    if (confirm('Deseja excluir este erro?')) {
+      setErrors(errors.filter(e => e.id !== id));
+    }
+  };
+
+  const handlePractice = async () => {
+    if (!practiceTema) return;
+    setIsGenerating(true);
+    setCurrentQuestion(null);
+    setSelectedAlt(null);
+    try {
+      const q = await generateQuestion(practiceTema, practiceNivel);
+      setCurrentQuestion(q);
+    } catch (error) {
+      console.error(error);
+      alert("Erro ao gerar questão. Tente novamente.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleAnswer = (idx: number) => {
+    if (selectedAlt !== null) return;
+    setSelectedAlt(idx);
+    const acertou = idx === currentQuestion.gabarito;
+    setPraticaHist([{
+      id: Date.now(),
+      tema: practiceTema,
+      materia: currentQuestion.materia,
+      enunciado: currentQuestion.enunciado,
+      acertou,
+      ts: Date.now()
+    }, ...praticaHist]);
+    if (window.navigator.vibrate) window.navigator.vibrate(acertou ? [10, 30, 10] : 50);
+  };
+
+  const filteredErrors = useMemo(() => {
+    return errors.filter(e => {
+      const matchesSearch = e.materia.toLowerCase().includes(search.toLowerCase()) || 
+                            e.questao.toLowerCase().includes(search.toLowerCase());
+      const matchesFilter = filter === 'todos' || 
+                            (filter === 'pendente' && !e.resolved) || 
+                            (filter === 'resolvido' && e.resolved) || 
+                            e.tab === filter;
+      return matchesSearch && matchesFilter;
+    });
+  }, [errors, filter, search]);
+
+  return (
+    <div className={cn(
+      "max-w-md mx-auto min-h-screen flex flex-col bg-bg text-foreground overflow-x-hidden",
+      platform === 'ios' ? "font-sans" : "font-sans"
+    )}>
+      <header className={cn(
+        "sticky top-0 z-30 bg-bg/80 backdrop-blur-xl border-b border-border px-4 pt-safe pb-3 transition-all",
+        platform === 'android' ? "h-16 flex items-center border-none shadow-sm" : "h-14"
+      )}>
+        <div className={cn(
+          "flex items-center justify-between w-full",
+          platform === 'android' ? "gap-4" : ""
+        )}>
+          {currentQuestion && activeSection === 'pratica' ? (
+            <button onClick={() => setCurrentQuestion(null)} className="p-2 -ml-2 text-tab-l active:bg-tab-l/10 rounded-full transition-colors">
+              <ArrowLeft size={24} />
+            </button>
+          ) : null}
+          
+          <div className={cn(
+            "flex items-baseline gap-1 font-display font-extrabold text-xl",
+            platform === 'android' && !currentQuestion ? "flex-1" : ""
+          )}>
+            <span className="text-tab-b">T</span>
+            <span className="text-tab-l">A</span>
+            <span className="text-tab-d">B</span>
+            {platform === 'android' && (
+              <span className="ml-2 text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] opacity-40">
+                {activeSection === 'registrar' ? 'Início' : 
+                 activeSection === 'revisao' ? 'Memoris' :
+                 activeSection === 'lista' ? 'Erros' :
+                 activeSection === 'pratica' ? 'Prática' : 'Mais'}
+              </span>
+            )}
+          </div>
+          
+          {platform === 'ios' && !currentQuestion && (
+            <div className="absolute left-1/2 -translate-x-1/2 font-display font-bold text-xs uppercase tracking-[0.15em] opacity-60">
+              {activeSection === 'registrar' ? 'Novo Erro' : 
+               activeSection === 'revisao' ? 'Memoris' :
+               activeSection === 'lista' ? 'Meus Erros' :
+               activeSection === 'pratica' ? 'Prática' : 'Mais'}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={handleShare}
+              className="p-2 text-muted-foreground active:text-tab-l transition-colors"
+            >
+              {copied ? <Check size={18} className="text-green-500" /> : <Share2 size={18} />}
+            </button>
+            <div className="flex items-center gap-2 bg-tab-b/10 border border-tab-b/20 rounded-full px-3 py-1 text-tab-b text-[10px] font-bold">
+              <Flame size={12} />
+              {streak.streak}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 p-4 pb-32">
+        {activeSection === 'registrar' && platform === 'android' && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="grid grid-cols-3 gap-2 mb-6"
+          >
+            <StatBox type="B" count={errors.filter(e => e.tab === 'B').length} />
+            <StatBox type="L" count={errors.filter(e => e.tab === 'L').length} />
+            <StatBox type="D" count={errors.filter(e => e.tab === 'D').length} />
+          </motion.div>
+        )}
+        
+        <AnimatePresence mode="wait">
+          {activeSection === 'registrar' && (
+            <motion.div 
+              key="registrar"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="space-y-6"
+            >
+              {dueErrors.length > 0 && (
+                <motion.div 
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setActiveSection('revisao')}
+                  className="bg-gradient-to-br from-tab-l/20 to-purple-500/10 border border-tab-l/30 rounded-3xl p-6 flex items-center justify-between cursor-pointer"
+                >
+                  <div>
+                    <div className="font-display font-bold text-base flex items-center gap-2">
+                      <Sparkles size={18} className="text-tab-l" />
+                      Memoris
+                    </div>
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest mt-1">Sessão de revisão pendente</div>
+                  </div>
+                  <div className="font-display font-extrabold text-4xl text-tab-l">{dueErrors.length}</div>
+                </motion.div>
+              )}
+
+              <div className="neo-card p-8 space-y-6">
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Novo Registro</h3>
+                  <button 
+                    onClick={() => setIsScanning(true)}
+                    className="flex items-center gap-2 text-tab-l text-[10px] font-black uppercase tracking-widest bg-tab-l/10 px-4 py-2 rounded-xl"
+                  >
+                    <Scan size={14} />
+                    Escanear ENEM
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <InputGroup label="Matéria" value={formData.materia} onChange={v => setFormData({...formData, materia: v})} placeholder="Ex: Matemática..." />
+                  <InputGroup label="Questão / Tópico" value={formData.questao} onChange={v => setFormData({...formData, questao: v})} placeholder="Ex: Questão 42..." />
+                  
+                  <div className="grid grid-cols-3 gap-3">
+                    {(['B', 'L', 'D'] as TabType[]).map(t => (
+                      <TabButton key={t} type={t} active={formData.tab === t} onClick={() => setFormData({...formData, tab: t})} />
+                    ))}
+                  </div>
+
+                  <button 
+                    onClick={handleSaveError}
+                    className="w-full bg-gradient-to-br from-tab-l to-purple-500 text-white font-display font-bold py-5 rounded-[1.5rem] shadow-2xl shadow-tab-l/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                  >
+                    <PlusCircle size={20} />
+                    Salvar Registro
+                  </button>
+                </div>
+              </div>
+
+              {isScanning && (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="fixed inset-0 z-50 bg-bg/95 flex items-center justify-center p-6 backdrop-blur-2xl"
+                >
+                  <div className="w-full max-w-sm space-y-6 max-h-[90vh] flex flex-col">
+                    <div className="flex justify-between items-center shrink-0">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-tab-l/10 flex items-center justify-center text-tab-l">
+                          <Scan size={20} />
+                        </div>
+                        <h3 className="font-display font-bold text-xl">Scanner ENEM</h3>
+                      </div>
+                      <button onClick={() => { setIsScanning(false); setScannedResults([]); }} className="text-muted-foreground p-2">
+                        <X size={24} />
+                      </button>
+                    </div>
+
+                    {scannedResults.length > 0 ? (
+                      <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-tab-l">Questões Detectadas ({scannedResults.length})</p>
+                        {scannedResults.map((res, i) => (
+                          <motion.div 
+                            key={i}
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: i * 0.1 }}
+                            className="neo-card p-4 space-y-3"
+                          >
+                            <div className="flex justify-between items-start gap-2">
+                              <span className="text-[10px] font-bold px-2 py-1 bg-tab-l/10 text-tab-l rounded-lg uppercase">{res.materia}</span>
+                              <div className="flex gap-1">
+                                <span className={cn(
+                                  "w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-black",
+                                  res.tab === 'B' ? "bg-tab-b/20 text-tab-b" :
+                                  res.tab === 'L' ? "bg-tab-l/20 text-tab-l" : "bg-tab-d/20 text-tab-d"
+                                )}>
+                                  {res.tab}
+                                </span>
+                              </div>
+                            </div>
+                            <h4 className="text-sm font-bold leading-tight">{res.questao}</h4>
+                            <p className="text-[11px] text-muted-foreground line-clamp-2">{res.descricao}</p>
+                            <button 
+                              onClick={() => handleSaveScanned(res)}
+                              className="w-full py-3 bg-tab-l/10 hover:bg-tab-l/20 text-tab-l text-[11px] font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+                            >
+                              <PlusCircle size={14} />
+                              SALVAR ESTA
+                            </button>
+                          </motion.div>
+                        ))}
+                        {scannedResults.length > 0 && (
+                          <button 
+                            onClick={() => {
+                              scannedResults.forEach(handleSaveScanned);
+                              setIsScanning(false);
+                              setScannedResults([]);
+                            }}
+                            className="w-full py-4 bg-tab-l text-white font-display font-bold rounded-2xl shadow-xl shadow-tab-l/20"
+                          >
+                            SALVAR TODAS ({scannedResults.length})
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-6 flex-1 flex flex-col">
+                        <p className="text-xs text-muted-foreground leading-relaxed">Cole o texto da prova do ENEM. Nossa IA vai separar as questões automaticamente para você organizar seus erros.</p>
+                        <textarea 
+                          value={scanInput}
+                          onChange={e => setScanInput(e.target.value)}
+                          placeholder="Cole o texto aqui..."
+                          className="flex-1 bg-surface border border-border rounded-3xl p-6 text-sm outline-none focus:border-tab-l transition-all resize-none font-medium"
+                        />
+                        <button 
+                          onClick={handleScan}
+                          disabled={isParsing || !scanInput}
+                          className="w-full bg-tab-l text-white font-display font-bold py-5 rounded-2xl shadow-xl shadow-tab-l/20 disabled:opacity-50 flex items-center justify-center gap-2 shrink-0"
+                        >
+                          {isParsing ? (
+                            <>
+                              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              <span>Processando...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Zap size={18} />
+                              <span>ANALISAR PROVA</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </motion.div>
+          )}
+
+          {activeSection === 'revisao' && (
+            <motion.div 
+              key="revisao"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <div className="flex items-center justify-between px-2">
+                <h2 className="font-display font-black text-2xl tracking-tight">Memoris</h2>
+                <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest bg-surface px-3 py-1 rounded-full border border-border">
+                  Spaced Repetition
+                </div>
+              </div>
+
+              {dueErrors.length === 0 ? (
+                <div className="neo-card p-12 text-center space-y-6 flex flex-col items-center">
+                  <div className="relative">
+                    <div className="w-24 h-24 bg-green-500/10 rounded-[2.5rem] flex items-center justify-center text-green-500">
+                      <CheckCircle2 size={48} />
+                    </div>
+                    <motion.div 
+                      animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
+                      transition={{ repeat: Infinity, duration: 2 }}
+                      className="absolute -top-2 -right-2 w-8 h-8 bg-tab-l/20 rounded-full flex items-center justify-center text-tab-l"
+                    >
+                      <Sparkles size={16} />
+                    </motion.div>
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="font-display font-bold text-xl">Tudo em dia!</h3>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed max-w-[200px] mx-auto">Sua memória está afiada. O algoritmo de repetição espaçada avisará quando for hora de revisar.</p>
+                  </div>
+                  <button 
+                    onClick={() => setActiveSection('registrar')}
+                    className="bg-surface border border-border px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-border transition-colors"
+                  >
+                    VOLTAR AO INÍCIO
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {dueErrors.map(error => (
+                    <ErrorCard 
+                      key={error.id} 
+                      error={error} 
+                      onReview={() => handleReview(error.id)}
+                      onResolve={() => handleToggleResolve(error.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {activeSection === 'lista' && (
+            <motion.div 
+              key="lista"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="space-y-4"
+            >
+              <div className="relative">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input 
+                  type="text" 
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Buscar erro..."
+                  className="w-full bg-surface border border-border rounded-2xl pl-10 pr-4 py-3 text-sm outline-none focus:border-tab-l transition-all"
+                />
+              </div>
+
+              <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                {['todos', 'B', 'L', 'D', 'pendente', 'resolvido'].map(f => (
+                  <button 
+                    key={f}
+                    onClick={() => setFilter(f)}
+                    className={cn(
+                      "text-[10px] px-4 py-2 rounded-full border whitespace-nowrap transition-all font-bold uppercase tracking-wider",
+                      filter === f ? "bg-tab-l border-tab-l text-white" : "bg-surface border-border text-muted-foreground"
+                    )}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-2">
+                {filteredErrors.map(error => (
+                  <div key={error.id} className={cn(
+                    "bg-surface border border-border rounded-2xl p-4 flex items-center gap-4 active:scale-[0.99] transition-all",
+                    error.resolved && "opacity-40 grayscale"
+                  )}>
+                    <div className={cn(
+                      "w-12 h-12 rounded-xl flex items-center justify-center font-display font-extrabold text-xl",
+                      `bg-tab-${error.tab.toLowerCase()}/10 text-tab-${error.tab.toLowerCase()}`
+                    )}>
+                      {error.tab}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-sm truncate">{error.materia}</div>
+                      <div className="text-[10px] text-muted-foreground truncate">{error.questao}</div>
+                    </div>
+                    <div className="flex gap-1">
+                      <button onClick={() => handleToggleResolve(error.id)} className="p-2 text-muted-foreground active:text-green-500">
+                        <CheckCircle2 size={20} className={error.resolved ? 'text-green-500' : ''} />
+                      </button>
+                      <button onClick={() => handleDelete(error.id)} className="p-2 text-muted-foreground active:text-tab-d">
+                        <Trash2 size={20} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          {activeSection === 'pratica' && (
+            <motion.div 
+              key="pratica"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="space-y-4"
+            >
+              {!currentQuestion ? (
+                <div className="space-y-6">
+                  <div className="bg-surface-2 border border-border rounded-3xl p-8 text-center shadow-2xl">
+                    <div className="w-16 h-16 bg-tab-l/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                      <BrainCircuit size={32} className="text-tab-l" />
+                    </div>
+                    <h3 className="font-display font-bold text-lg mb-2">Prática Inteligente</h3>
+                    <p className="text-xs text-muted-foreground mb-6 leading-relaxed">A IA gera questões personalizadas para você treinar seus pontos fracos.</p>
+                    
+                    <div className="relative mb-4">
+                      <input 
+                        type="text" 
+                        value={practiceTema}
+                        onChange={e => setPracticeTema(e.target.value)}
+                        placeholder="Tema (ex: Botânica)"
+                        className="w-full bg-surface border border-border rounded-2xl p-4 pr-12 text-sm outline-none focus:border-tab-l text-center font-bold"
+                      />
+                      <button 
+                        onClick={() => setIsScanning(true)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-tab-l active:scale-90 transition-all"
+                      >
+                        <Scan size={20} />
+                      </button>
+                    </div>
+
+                    <div className="flex gap-2 mb-6">
+                      {[
+                        { n: 'Fácil', s: 'Stanford', d: 'Fundamentos' },
+                        { n: 'Médio', s: 'MIT', d: 'Raciocínio' },
+                        { n: 'Difícil', s: 'Harvard', d: 'Análise' }
+                      ].map(({ n, s, d }) => (
+                        <button
+                          key={n}
+                          onClick={() => setPracticeNivel(n as any)}
+                          className={cn(
+                            "flex-1 py-3 rounded-xl transition-all border-2 flex flex-col items-center gap-0.5",
+                            practiceNivel === n 
+                              ? "bg-tab-l/20 border-tab-l text-tab-l" 
+                              : "bg-surface border-border text-muted-foreground opacity-50"
+                          )}
+                        >
+                          <span className="text-[10px] font-black uppercase tracking-widest leading-none">{n}</span>
+                          <span className="text-[8px] font-bold opacity-80 leading-none">{s}</span>
+                          <span className="text-[6px] font-medium opacity-40 uppercase tracking-tighter leading-none">{d}</span>
+                        </button>
+                      ))}
+                    </div>
+                    
+                    <button 
+                      onClick={handlePractice}
+                      disabled={isGenerating || !practiceTema}
+                      className="w-full bg-tab-l text-white font-display font-bold py-4 rounded-2xl disabled:opacity-50 active:scale-95 transition-all"
+                    >
+                      {isGenerating ? 'Gerando...' : 'Gerar Questão'}
+                    </button>
+                  </div>
+
+                  {praticaHist.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground px-1">Últimos Treinos</h4>
+                      {praticaHist.slice(0, 3).map(h => (
+                        <div key={h.id} className="bg-surface border border-border rounded-2xl p-4 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className={cn("w-2 h-2 rounded-full", h.acertou ? "bg-green-500" : "bg-tab-d")} />
+                            <div className="text-xs font-bold">{h.tema}</div>
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">{new Date(h.ts).toLocaleDateString()}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-surface border border-border rounded-3xl p-6 shadow-xl"
+                  >
+                    <div className="flex justify-between items-center mb-4">
+                      <span className="text-[10px] font-bold text-tab-l uppercase tracking-widest">{currentQuestion.materia}</span>
+                      <div className="text-[10px] text-muted-foreground font-mono">ESTILO ENEM</div>
+                    </div>
+                    
+                    <div className="text-sm leading-relaxed mb-8 font-medium">{currentQuestion.enunciado}</div>
+                    
+                    <div className="space-y-3">
+                      {currentQuestion.alternativas.map((alt: string, i: number) => {
+                        let status = "default";
+                        if (selectedAlt !== null) {
+                          if (i === currentQuestion.gabarito) status = "correct";
+                          else if (i === selectedAlt) status = "wrong";
+                          else status = "disabled";
+                        }
+
+                        return (
+                          <button
+                            key={i}
+                            onClick={() => handleAnswer(i)}
+                            disabled={selectedAlt !== null}
+                            className={cn(
+                              "w-full text-left p-4 rounded-2xl border-2 transition-all flex gap-4 items-start",
+                              status === "default" && "border-border bg-surface active:bg-surface-2",
+                              status === "correct" && "border-green-500 bg-green-500/10 scale-[1.02]",
+                              status === "wrong" && "border-tab-d bg-tab-d/10",
+                              status === "disabled" && "border-border opacity-30 grayscale"
+                            )}
+                          >
+                            <span className={cn(
+                              "font-display font-black text-lg",
+                              status === "correct" ? "text-green-500" : "text-muted-foreground"
+                            )}>{String.fromCharCode(65 + i)}</span>
+                            <span className="text-xs font-medium leading-snug">{alt}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+
+                  {selectedAlt !== null && (
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-surface-2 border border-border rounded-3xl p-6 space-y-4 shadow-2xl"
+                    >
+                      <div className={cn(
+                        "text-lg font-display font-black text-center",
+                        selectedAlt === currentQuestion.gabarito ? "text-green-500" : "text-tab-d"
+                      )}>
+                        {selectedAlt === currentQuestion.gabarito ? 'ACERTOU! 🎯' : 'ERROU... 📉'}
+                      </div>
+                      
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="h-px flex-1 bg-border" />
+                          <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Explicação {currentQuestion.escola}</span>
+                          <div className="h-px flex-1 bg-border" />
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed italic">"{currentQuestion.explicacao}"</p>
+                        <div className="bg-tab-l/10 p-4 rounded-2xl border border-tab-l/20">
+                          <div className="flex justify-between items-start mb-1">
+                            <div className="text-[10px] font-bold text-tab-l uppercase tracking-widest">Conceito Chave</div>
+                            <Sparkles size={12} className="text-tab-l" />
+                          </div>
+                          <p className="text-xs font-bold">{currentQuestion.conceito}</p>
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={() => setCurrentQuestion(null)}
+                        className="w-full bg-foreground text-bg font-display font-bold py-4 rounded-2xl active:scale-95 transition-all"
+                      >
+                        Próxima Questão
+                      </button>
+                    </motion.div>
+                  )}
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {activeSection === 'config' && (
+            <motion.div 
+              key="config"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="space-y-6"
+            >
+              <div className="neo-card p-8 space-y-8">
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 rounded-[2rem] bg-tab-b/10 flex items-center justify-center text-tab-b">
+                    <BarChart3 size={32} />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-xl">Estatísticas</h3>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Seu desempenho no TAB</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-surface border border-border rounded-3xl p-4 text-center">
+                    <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1">Total</div>
+                    <div className="font-display font-black text-2xl text-tab-l">{errors.length}</div>
+                  </div>
+                  <div className="bg-surface border border-border rounded-3xl p-4 text-center">
+                    <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1">Resolvidos</div>
+                    <div className="font-display font-black text-2xl text-green-500">{errors.filter(e => e.resolved).length}</div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex justify-between items-end">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Meta Semanal</span>
+                    <span className="font-display font-bold text-xl">{Math.round((errors.filter(e => e.resolved).length / (meta || 1)) * 100)}%</span>
+                  </div>
+                  <div className="h-2 bg-surface rounded-full overflow-hidden border border-border">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${Math.min(100, (errors.filter(e => e.resolved).length / (meta || 1)) * 100)}%` }}
+                      className="h-full bg-gradient-to-r from-tab-l to-green-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="neo-card p-6 space-y-4">
+                <h4 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground px-2">Compartilhar & Convite</h4>
+                <button 
+                  onClick={handleShare}
+                  className="w-full flex items-center justify-between p-5 bg-surface rounded-3xl border border-border hover:border-tab-l transition-all group"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-2xl bg-tab-l/10 flex items-center justify-center text-tab-l group-hover:scale-110 transition-transform">
+                      <Share2 size={20} />
+                    </div>
+                    <div className="text-left">
+                      <div className="text-sm font-bold">Convidar Amigos</div>
+                      <div className="text-[10px] text-muted-foreground">Compartilhe o Memoris</div>
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-muted-foreground" />
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <div className="bg-surface-2 border border-border rounded-3xl p-6 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-tab-l/10 flex items-center justify-center text-tab-l">
+                      <Key size={20} />
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-bold">Chave de API Gemini</div>
+                      <div className="text-[9px] text-muted-foreground">
+                        {hasApiKey ? "Chave configurada e ativa" : "Nenhuma chave configurada"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <input 
+                      type="password"
+                      value={manualApiKey}
+                      onChange={(e) => setManualApiKey(e.target.value)}
+                      placeholder="Cole sua chave aqui (AI_...)"
+                      className="w-full bg-surface border border-border rounded-xl p-3 text-xs outline-none focus:border-tab-l"
+                    />
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={saveManualKey}
+                        className="flex-1 bg-tab-l text-white font-black text-[10px] py-3 rounded-xl uppercase tracking-widest"
+                      >
+                        Salvar Chave
+                      </button>
+                      {hasApiKey && (
+                        <button 
+                          onClick={testKey}
+                          disabled={isTestingKey}
+                          className="flex-1 bg-surface border border-border text-foreground font-black text-[10px] py-3 rounded-xl uppercase tracking-widest disabled:opacity-50"
+                        >
+                          {isTestingKey ? "..." : "Testar"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <p className="text-[8px] text-muted-foreground text-center leading-tight">
+                    Obtenha sua chave grátis em <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-tab-l underline">Google AI Studio</a>.
+                  </p>
+                </div>
+
+                <button 
+                  onClick={() => {
+                    if (confirm('Apagar todos os dados?')) {
+                      setErrors([]);
+                      setStreak({ streak: 0, lastDate: '' });
+                      setPraticaHist([]);
+                      localStorage.clear();
+                    }
+                  }}
+                  className="w-full bg-tab-d/5 text-tab-d border border-tab-d/10 font-black text-[10px] uppercase tracking-widest py-5 rounded-[1.5rem] active:scale-95 transition-all"
+                >
+                  Zerar Aplicativo
+                </button>
+              </div>
+
+              <div className="text-center space-y-2 py-8">
+                <div className="font-display font-black text-2xl opacity-10 tracking-tighter">MEMORIS TAB</div>
+                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.4em] opacity-20">v3.2.0</div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </main>
+
+      <nav className="fixed bottom-0 left-0 right-0 bg-bg/80 backdrop-blur-2xl border-t border-border flex justify-around px-2 pt-2 pb-safe-bottom z-40">
+        <NavButton active={activeSection === 'registrar'} onClick={() => setActiveSection('registrar')} icon={<LayoutGrid size={22} />} label="Início" />
+        <NavButton active={activeSection === 'revisao'} onClick={() => setActiveSection('revisao')} icon={<RotateCcw size={22} />} label="Memoris" badge={dueErrors.length} />
+        <NavButton active={activeSection === 'lista'} onClick={() => setActiveSection('lista')} icon={<List size={22} />} label="Erros" />
+        <NavButton active={activeSection === 'pratica'} onClick={() => setActiveSection('pratica')} icon={<Target size={22} />} label="Prática" />
+        <NavButton active={activeSection === 'config'} onClick={() => setActiveSection('config')} icon={<Settings size={22} />} label="Mais" />
+      </nav>
+    </div>
+  );
+}
+
+// --- Sub-components ---
+
+interface StatBoxProps {
+  key?: any;
+  type: TabType;
+  count: number;
+}
+
+function StatBox({ type, count }: StatBoxProps) {
+  const colors = { B: 'text-tab-b bg-tab-b/10 border-tab-b/20', L: 'text-tab-l bg-tab-l/10 border-tab-l/20', D: 'text-tab-d bg-tab-d/10 border-tab-d/20' };
+  return (
+    <div className={cn("rounded-xl border p-2 text-center", colors[type])}>
+      <div className="font-display font-black text-lg leading-none">{count}</div>
+      <div className="text-[7px] font-bold uppercase tracking-widest opacity-70 mt-1">{type}</div>
+    </div>
+  );
+}
+
+interface InputGroupProps {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+}
+
+function InputGroup({ label, value, onChange, placeholder }: InputGroupProps) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground px-1">{label}</label>
+      <input 
+        type="text" 
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full bg-surface border border-border rounded-2xl p-4 text-sm font-medium focus:border-tab-l outline-none transition-all shadow-sm"
+      />
+    </div>
+  );
+}
+
+interface TabButtonProps {
+  key?: any;
+  type: TabType;
+  active: boolean;
+  onClick: () => void;
+}
+
+function TabButton({ type, active, onClick }: TabButtonProps) {
+  const labels = { B: 'Banal', L: 'Lacuna', D: 'Desconhec.' };
+  const color = type === 'B' ? 'tab-b' : type === 'L' ? 'tab-l' : 'tab-d';
+  
+  return (
+    <motion.button
+      whileTap={{ scale: 0.95 }}
+      onClick={onClick}
+      className={cn(
+        "p-4 rounded-2xl border-2 transition-all text-center",
+        active 
+          ? `bg-${color}/20 border-${color} shadow-lg shadow-${color}/10` 
+          : 'bg-surface border-border opacity-40 grayscale'
+      )}
+    >
+      <div className={cn("font-display font-black text-3xl", `text-${color}`)}>{type}</div>
+      <div className="text-[8px] font-bold uppercase tracking-tighter text-muted-foreground">{labels[type]}</div>
+    </motion.button>
+  );
+}
+
+interface ErrorCardProps {
+  key?: any;
+  error: StudyError;
+  onReview: () => void;
+  onResolve: () => void;
+}
+
+function ErrorCard({ error, onReview, onResolve }: ErrorCardProps) {
+  const color = error.tab.toLowerCase();
+  return (
+    <motion.div 
+      layout
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className={cn(
+        "bg-surface border-l-4 border-y border-r border-border rounded-2xl p-5 shadow-sm",
+        `border-l-tab-${color}`
+      )}
+    >
+      <div className="flex justify-between items-start mb-3">
+        <span className={cn(
+          "text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-widest",
+          `bg-tab-${color}/10 text-tab-${color}`
+        )}>
+          {error.tab} — {error.tab === 'B' ? 'Banal' : error.tab === 'L' ? 'Lacuna' : 'Desconhec.'}
+        </span>
+        <span className="text-[9px] font-bold text-muted-foreground font-mono">{error.data}</span>
+      </div>
+      <h3 className="font-display font-bold text-sm mb-1">{error.materia}</h3>
+      <p className="text-xs text-muted-foreground mb-5 font-medium">{error.questao}</p>
+      <div className="flex gap-2">
+        <button onClick={onReview} className="flex-1 bg-tab-l text-white text-[10px] font-black py-3 rounded-xl shadow-lg shadow-tab-l/20 active:scale-95 transition-all">
+          REVISEI
+        </button>
+        <button onClick={onResolve} className="flex-1 bg-surface-2 text-foreground border border-border text-[10px] font-black py-3 rounded-xl active:scale-95 transition-all">
+          RESOLVIDO
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+interface StatsCardProps {
+  icon: ReactNode;
+  label: string;
+  value: number;
+  color: string;
+}
+
+function StatsCard({ icon, label, value, color }: StatsCardProps) {
+  return (
+    <div className="bg-surface border border-border rounded-3xl p-5 text-center shadow-sm">
+      <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-3", `bg-${color}/10 text-${color}`)}>
+        {icon}
+      </div>
+      <div className="font-display font-black text-3xl leading-none">{value}</div>
+      <div className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest mt-2">{label}</div>
+    </div>
+  );
+}
+
+interface NavButtonProps {
+  active: boolean;
+  onClick: () => void;
+  icon: ReactNode;
+  label: string;
+  badge?: number;
+}
+
+function NavButton({ active, onClick, icon, label, badge }: NavButtonProps) {
+  const platform = Capacitor.getPlatform();
+  return (
+    <button 
+      onClick={onClick}
+      className={cn(
+        "flex flex-col items-center gap-1 p-2 transition-all relative flex-1 group",
+        active ? "text-foreground" : "text-muted-foreground opacity-40"
+      )}
+    >
+      <div className={cn(
+        "relative px-5 py-1.5 rounded-2xl transition-all duration-500",
+        active && "bg-tab-l/10 shadow-[0_0_20px_rgba(139,92,246,0.1)]"
+      )}>
+        <div className={cn(
+          "transition-all duration-500",
+          active ? "text-tab-l scale-110" : "scale-100"
+        )}>
+          {icon}
+        </div>
+        {badge ? (
+          <span className={cn(
+            "absolute -top-1 -right-1 bg-tab-d text-white text-[7px] font-black w-4 h-4 rounded-full flex items-center justify-center border-2 border-bg",
+            platform === 'android' && "top-0 right-2"
+          )}>
+            {badge}
+          </span>
+        ) : null}
+      </div>
+      <span className={cn(
+        "text-[8px] font-black uppercase tracking-[0.15em] transition-all mt-1",
+        active ? "opacity-100 text-tab-l" : "opacity-40"
+      )}>{label === 'Revisão' ? 'Memoris' : label}</span>
+    </button>
+  );
+}

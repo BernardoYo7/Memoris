@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Método TAB</string>
+    <string name="title_activity_main">Método TAB</string>
+    <string name="package_name">com.metodotab.app</string>
+    <string name="custom_url_scheme">com.metodotab.app</string>
+</resources>
