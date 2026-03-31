@@ -42,6 +42,7 @@ import * as pdfjs from 'pdfjs-dist';
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
+import Markdown from 'react-markdown';
 
 // --- Types ---
 type TabType = 'B' | 'L' | 'D';
@@ -81,6 +82,29 @@ const STREAK_KEY = 'tab_streak_v3';
 const META_KEY = 'tab_meta_v3';
 const PRATICA_KEY = 'tab_pratica_v3';
 
+const SUBJECTS = [
+  { 
+    name: 'Linguagens', 
+    subs: ['Português', 'Literatura', 'Interpretação', 'Artes', 'Educação Física'],
+    color: 'blue-500'
+  },
+  { 
+    name: 'Matemática', 
+    subs: ['Álgebra', 'Geometria', 'Estatística', 'Probabilidade', 'Financeira'],
+    color: 'amber-500'
+  },
+  { 
+    name: 'Natureza', 
+    subs: ['Biologia', 'Física', 'Química', 'Ecologia', 'Genética'],
+    color: 'green-500'
+  },
+  { 
+    name: 'Humanas', 
+    subs: ['História', 'Geografia', 'Filosofia', 'Sociologia', 'Atualidades'],
+    color: 'red-500'
+  }
+];
+
 const REVIEW_INTERVALS: Record<TabType, number[]> = {
   B: [1],
   L: [1, 3],
@@ -103,12 +127,13 @@ async function generateQuestion(tema: string, nivel: string = "Médio") {
     model: "gemini-3-flash-preview",
     contents: `Gere uma questão estilo ENEM sobre: "${tema}". Dificuldade: ${nivel}.
     Instruções:
-    1. Enunciado contextualizado e fiel ao estilo ENEM.
+    1. Enunciado contextualizado, denso e fiel ao estilo ENEM (Matriz de Referência).
     2. 5 alternativas (A-E).
-    3. Explicações didáticas para CADA alternativa, focando no porquê está certa ou errada.
-    4. Seção "Conceito Base": Explicação profunda do tema central.
-    5. Seção "Como não errar": Dicas práticas para identificar pegadinhas ou aplicar a lógica correta.
-    6. Retorne apenas JSON:
+    3. Explicações analíticas para CADA alternativa, detalhando o erro lógico ou a pegadinha.
+    4. Seção "Conceito Base": Explicação teórica profunda e estruturada.
+    5. Seção "Como não errar": Estratégias de resolução e padrões de distratores.
+    6. Seção "O que o ENEM cobra": Competências e Habilidades relacionadas (ex: H12, C4).
+    7. Retorne apenas JSON:
     {
       "materia": "string",
       "enunciado": "string",
@@ -116,7 +141,8 @@ async function generateQuestion(tema: string, nivel: string = "Médio") {
       "gabarito": number (0-4),
       "explicacoes": { "A": "string", "B": "string", "C": "string", "D": "string", "E": "string" },
       "conceito": "string",
-      "comoNaoErrar": "string"
+      "comoNaoErrar": "string",
+      "oQueCobra": "string"
     }`,
     config: {
       thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
@@ -140,9 +166,66 @@ async function generateQuestion(tema: string, nivel: string = "Médio") {
             required: ["A", "B", "C", "D", "E"]
           },
           conceito: { type: Type.STRING },
-          comoNaoErrar: { type: Type.STRING }
+          comoNaoErrar: { type: Type.STRING },
+          oQueCobra: { type: Type.STRING }
         },
-        required: ["materia", "enunciado", "alternativas", "gabarito", "explicacoes", "conceito", "comoNaoErrar"]
+        required: ["materia", "enunciado", "alternativas", "gabarito", "explicacoes", "conceito", "comoNaoErrar", "oQueCobra"]
+      }
+    }
+  });
+  return JSON.parse(response.text || "{}");
+}
+
+async function generateLesson(tema: string) {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Crie uma aula MASTERCLASS e profunda sobre: "${tema}".
+    Estrutura:
+    1. Introdução Histórica/Contextual.
+    2. Teoria Aprofundada (Explicar o "porquê" e não apenas o "o quê").
+    3. Conexões Interdisciplinares (Como isso se liga a outras matérias).
+    4. Mapa Mental Textual (Estrutura hierárquica).
+    5. Erros Críticos (Onde 90% dos alunos falham).
+    6. Resumo "Flash" para revisão rápida.
+    Retorne em Markdown rico e bem formatado.`,
+    config: {
+      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
+    }
+  });
+  return response.text;
+}
+
+async function generateFlashcards(tema: string) {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Gere 5 flashcards de revisão ativa (Active Recall) sobre: "${tema}".
+    Cada flashcard deve ter uma pergunta desafiadora (Frente) e uma resposta detalhada e explicativa (Verso).
+    Retorne apenas JSON:
+    {
+      "flashcards": [
+        { "frente": "string", "verso": "string" }
+      ]
+    }`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          flashcards: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                frente: { type: Type.STRING },
+                verso: { type: Type.STRING }
+              },
+              required: ["frente", "verso"]
+            }
+          }
+        },
+        required: ["flashcards"]
       }
     }
   });
@@ -280,6 +363,18 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedAlt, setSelectedAlt] = useState<number | null>(null);
   const [isTestingKey, setIsTestingKey] = useState(false);
+
+  // Lesson state
+  const [lessonContent, setLessonContent] = useState<string | null>(null);
+  const [isGeneratingLesson, setIsGeneratingLesson] = useState(false);
+  const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
+  const [selectedSub, setSelectedSub] = useState<string | null>(null);
+
+  // Flashcards state
+  const [flashcards, setFlashcards] = useState<any[] | null>(null);
+  const [isGeneratingFlashcards, setIsGeneratingFlashcards] = useState(false);
+  const [currentFlashcardIndex, setCurrentFlashcardIndex] = useState(0);
+  const [showFlashcardBack, setShowFlashcardBack] = useState(false);
 
   // Pomodoro state
   const [timeLeft, setTimeLeft] = useState(25 * 60);
@@ -576,6 +671,50 @@ export default function App() {
     }, ...praticaHist]);
     if (window.navigator.vibrate) window.navigator.vibrate(acertou ? [10, 30, 10] : 50);
   };
+
+  const handleLesson = async () => {
+    const tema = selectedSub || practiceTema;
+    if (!tema) return;
+    setIsGeneratingLesson(true);
+    setLessonContent(null);
+    try {
+      const content = await generateLesson(tema);
+      setLessonContent(content);
+    } catch (error) {
+      console.error(error);
+      alert("Erro ao gerar aula. Tente novamente.");
+    } finally {
+      setIsGeneratingLesson(false);
+    }
+  };
+
+  const handleFlashcards = async () => {
+    const tema = selectedSub || practiceTema;
+    if (!tema) return;
+    setIsGeneratingFlashcards(true);
+    setFlashcards(null);
+    setCurrentFlashcardIndex(0);
+    setShowFlashcardBack(false);
+    try {
+      const data = await generateFlashcards(tema);
+      setFlashcards(data.flashcards);
+    } catch (error) {
+      console.error(error);
+      alert("Erro ao gerar flashcards.");
+    } finally {
+      setIsGeneratingFlashcards(false);
+    }
+  };
+
+  const masteryByTopic = useMemo(() => {
+    const stats: Record<string, { total: number, correct: number }> = {};
+    praticaHist.forEach(h => {
+      if (!stats[h.tema]) stats[h.tema] = { total: 0, correct: 0 };
+      stats[h.tema].total++;
+      if (h.acertou) stats[h.tema].correct++;
+    });
+    return stats;
+  }, [praticaHist]);
 
   const filteredErrors = useMemo(() => {
     return errors.filter(e => {
@@ -965,7 +1104,88 @@ export default function App() {
               animate={{ opacity: 1, scale: 1 }}
               className="space-y-4"
             >
-              {!currentQuestion ? (
+              {flashcards ? (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="space-y-6"
+                >
+                  <div className="flex justify-between items-center px-2">
+                    <button onClick={() => setFlashcards(null)} className="text-[10px] font-black text-tab-l uppercase tracking-widest flex items-center gap-1">
+                      <ArrowLeft size={12} /> Sair
+                    </button>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Flashcard {currentFlashcardIndex + 1} de {flashcards.length}</span>
+                  </div>
+
+                  <div 
+                    onClick={() => setShowFlashcardBack(!showFlashcardBack)}
+                    className="perspective-1000 cursor-pointer h-64"
+                  >
+                    <motion.div 
+                      animate={{ rotateY: showFlashcardBack ? 180 : 0 }}
+                      transition={{ duration: 0.6, type: "spring", stiffness: 260, damping: 20 }}
+                      className="relative w-full h-full preserve-3d"
+                    >
+                      {/* Front */}
+                      <div className="absolute inset-0 backface-hidden bg-surface border-2 border-tab-l rounded-[2.5rem] p-8 flex flex-col items-center justify-center text-center shadow-2xl">
+                        <div className="text-[10px] font-black text-tab-l uppercase tracking-widest mb-4">Pergunta</div>
+                        <p className="text-lg font-display font-bold leading-tight">{flashcards[currentFlashcardIndex].frente}</p>
+                        <div className="mt-8 text-[8px] font-bold text-muted-foreground uppercase tracking-widest animate-pulse">Toque para virar</div>
+                      </div>
+                      {/* Back */}
+                      <div className="absolute inset-0 backface-hidden bg-surface-2 border-2 border-green-500 rounded-[2.5rem] p-8 flex flex-col items-center justify-center text-center shadow-2xl rotate-y-180">
+                        <div className="text-[10px] font-black text-green-500 uppercase tracking-widest mb-4">Resposta</div>
+                        <p className="text-sm font-medium leading-relaxed">{flashcards[currentFlashcardIndex].verso}</p>
+                      </div>
+                    </motion.div>
+                  </div>
+
+                  <div className="flex gap-4">
+                    <button 
+                      disabled={currentFlashcardIndex === 0}
+                      onClick={() => { setCurrentFlashcardIndex(i => i - 1); setShowFlashcardBack(false); }}
+                      className="flex-1 bg-surface border border-border py-4 rounded-2xl font-bold disabled:opacity-30"
+                    >
+                      Anterior
+                    </button>
+                    <button 
+                      onClick={() => { 
+                        if (currentFlashcardIndex < flashcards.length - 1) {
+                          setCurrentFlashcardIndex(i => i + 1);
+                          setShowFlashcardBack(false);
+                        } else {
+                          setFlashcards(null);
+                        }
+                      }}
+                      className="flex-1 bg-tab-l text-white py-4 rounded-2xl font-bold"
+                    >
+                      {currentFlashcardIndex < flashcards.length - 1 ? 'Próximo' : 'Finalizar'}
+                    </button>
+                  </div>
+                </motion.div>
+              ) : lessonContent ? (
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-surface border border-border rounded-3xl p-6 shadow-xl relative"
+                >
+                  <button 
+                    onClick={() => setLessonContent(null)}
+                    className="absolute top-4 right-4 p-2 text-muted-foreground hover:text-tab-l"
+                  >
+                    <X size={20} />
+                  </button>
+                  <div className="prose prose-sm dark:prose-invert max-w-none markdown-body">
+                    <Markdown>{lessonContent}</Markdown>
+                  </div>
+                  <button 
+                    onClick={() => { setLessonContent(null); handlePractice(); }}
+                    className="w-full mt-8 bg-tab-l text-white font-display font-bold py-4 rounded-2xl active:scale-95 transition-all"
+                  >
+                    Praticar com Questão
+                  </button>
+                </motion.div>
+              ) : !currentQuestion ? (
                 <div className="space-y-6">
                   <PomodoroTimer 
                     timeLeft={timeLeft} 
@@ -981,14 +1201,63 @@ export default function App() {
                       <BrainCircuit size={32} className="text-tab-l" />
                     </div>
                     <h3 className="font-display font-bold text-lg mb-2">Prática Inteligente</h3>
-                    <p className="text-xs text-muted-foreground mb-6 leading-relaxed">A IA gera questões personalizadas para você treinar seus pontos fracos.</p>
+                    <p className="text-xs text-muted-foreground mb-6 leading-relaxed">A IA gera questões e aulas personalizadas para você dominar qualquer tema.</p>
                     
+                    {!selectedSubject ? (
+                      <div className="grid grid-cols-2 gap-3 mb-6">
+                        {SUBJECTS.map(s => (
+                          <button
+                            key={s.name}
+                            onClick={() => setSelectedSubject(s.name)}
+                            className={cn(
+                              "p-4 rounded-2xl border-2 border-border bg-surface hover:border-tab-l transition-all text-center group",
+                              `hover:bg-${s.color}/5`
+                            )}
+                          >
+                            <div className={cn("font-display font-black text-lg mb-1", `text-${s.color}`)}>{s.name}</div>
+                            <div className="text-[8px] font-bold uppercase tracking-widest opacity-40">Explorar</div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mb-6 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <button onClick={() => { setSelectedSubject(null); setSelectedSub(null); }} className="text-[10px] font-black text-tab-l uppercase tracking-widest flex items-center gap-1">
+                            <ArrowLeft size={12} /> Voltar
+                          </button>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{selectedSubject}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2 justify-center">
+                          {SUBJECTS.find(s => s.name === selectedSubject)?.subs.map(sub => (
+                            <button
+                              key={sub}
+                              onClick={() => { setSelectedSub(sub); setPracticeTema(sub); }}
+                              className={cn(
+                                "px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all border flex flex-col items-center gap-1",
+                                selectedSub === sub ? "bg-tab-l border-tab-l text-white" : "bg-surface border-border text-muted-foreground"
+                              )}
+                            >
+                              <span>{sub}</span>
+                              {masteryByTopic[sub] && (
+                                <div className="w-12 h-1 bg-black/20 rounded-full overflow-hidden">
+                                  <div 
+                                    className="h-full bg-white transition-all" 
+                                    style={{ width: `${(masteryByTopic[sub].correct / masteryByTopic[sub].total) * 100}%` }}
+                                  />
+                                </div>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="relative mb-4">
                       <input 
                         type="text" 
                         value={practiceTema}
-                        onChange={e => setPracticeTema(e.target.value)}
-                        placeholder="Tema (ex: Botânica)"
+                        onChange={e => { setPracticeTema(e.target.value); setSelectedSub(null); }}
+                        placeholder="Ou digite um tema livre..."
                         className="w-full bg-surface border border-border rounded-2xl p-4 pr-12 text-sm outline-none focus:border-tab-l text-center font-bold"
                       />
                       <button 
@@ -1022,13 +1291,31 @@ export default function App() {
                       ))}
                     </div>
                     
-                    <button 
-                      onClick={handlePractice}
-                      disabled={isGenerating || !practiceTema}
-                      className="w-full bg-tab-l text-white font-display font-bold py-4 rounded-2xl disabled:opacity-50 active:scale-95 transition-all"
-                    >
-                      {isGenerating ? 'Gerando...' : 'Gerar Questão'}
-                    </button>
+                    <div className="grid grid-cols-1 gap-2">
+                      <button 
+                        onClick={handlePractice}
+                        disabled={isGenerating || isGeneratingLesson || isGeneratingFlashcards || !practiceTema}
+                        className="w-full bg-tab-l text-white font-display font-bold py-4 rounded-2xl disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-2"
+                      >
+                        {isGenerating ? 'Gerando...' : 'Gerar Questão'}
+                      </button>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={handleLesson}
+                          disabled={isGenerating || isGeneratingLesson || isGeneratingFlashcards || !practiceTema}
+                          className="flex-1 bg-surface border border-border text-foreground font-display font-bold py-4 rounded-2xl disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-2"
+                        >
+                          {isGeneratingLesson ? 'Gerando...' : 'Ver Aula'}
+                        </button>
+                        <button 
+                          onClick={handleFlashcards}
+                          disabled={isGenerating || isGeneratingLesson || isGeneratingFlashcards || !practiceTema}
+                          className="flex-1 bg-surface border border-border text-foreground font-display font-bold py-4 rounded-2xl disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-2"
+                        >
+                          {isGeneratingFlashcards ? 'Gerando...' : 'Flashcards'}
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   {praticaHist.length > 0 && (
@@ -1149,6 +1436,18 @@ export default function App() {
                               </div>
                             </div>
                             <p className="text-[11px] leading-relaxed text-foreground/80">{currentQuestion.comoNaoErrar}</p>
+                          </div>
+
+                          <div className="bg-purple-500/5 p-4 rounded-2xl border border-purple-500/10">
+                            <div className="flex justify-between items-start mb-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-500">
+                                  <Zap size={14} />
+                                </div>
+                                <div className="text-[10px] font-black text-purple-500 uppercase tracking-widest">O que o ENEM cobra</div>
+                              </div>
+                            </div>
+                            <p className="text-[11px] leading-relaxed text-foreground/80">{currentQuestion.oQueCobra}</p>
                           </div>
                         </div>
                       </div>

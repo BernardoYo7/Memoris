@@ -53,4 +53,65 @@
   @apply bg-border rounded-full;
 }
 
+.markdown-body {
+  @apply text-foreground/90 leading-relaxed;
+}
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  @apply font-display font-bold mt-6 mb-3 text-tab-l;
+}
+
+.markdown-body h1 { @apply text-2xl; }
+.markdown-body h2 { @apply text-xl; }
+.markdown-body h3 { @apply text-lg; }
+
+.markdown-body p {
+  @apply mb-4;
+}
+
+.markdown-body ul, .markdown-body ol {
+  @apply mb-4 pl-6;
+}
+
+.markdown-body ul {
+  @apply list-disc;
+}
+
+.markdown-body ol {
+  @apply list-decimal;
+}
+
+.markdown-body li {
+  @apply mb-2;
+}
+
+.markdown-body strong {
+  @apply text-tab-l font-bold;
+}
+
+.markdown-body blockquote {
+  @apply border-l-4 border-tab-l/30 pl-4 italic my-4 text-muted-foreground;
+}
+
+.markdown-body code {
+  @apply bg-surface-2 px-1.5 py-0.5 rounded font-mono text-[0.9em] text-tab-b;
+}
+
+/* 3D Utilities for Flashcards */
+.perspective-1000 {
+  perspective: 1000px;
+}
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+.backface-hidden {
+  backface-visibility: hidden;
+}
+
+.rotate-y-180 {
+  transform: rotateY(180deg);
+}
+
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
