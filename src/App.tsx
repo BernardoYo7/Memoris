@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useMemo, ReactNode } from 'react';
-import { GoogleGenAI, Type } from "@google/genai";
+import React, { useState, useEffect, useMemo, ReactNode, ChangeEvent } from 'react';
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import { Capacitor } from '@capacitor/core';
 import { 
   PlusCircle, 
@@ -30,8 +30,16 @@ import {
   Copy,
   ChevronRight,
   LayoutGrid,
-  Key
+  Key,
+  FileText,
+  Upload,
+  Lightbulb,
+  BookOpen
 } from 'lucide-react';
+import * as pdfjs from 'pdfjs-dist';
+
+// Set worker for PDF.js
+pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 
@@ -82,7 +90,7 @@ const REVIEW_INTERVALS: Record<TabType, number[]> = {
 // --- AI Service ---
 function getAI() {
   const savedKey = localStorage.getItem('gemini_api_key');
-  const viteEnvKey = import.meta.env.VITE_GEMINI_API_KEY;
+  const viteEnvKey = (import.meta as any).env.VITE_GEMINI_API_KEY;
   
   // No AI Studio environment, we use either the saved key or the VITE_ env var
   const apiKey = savedKey || viteEnvKey || "";
@@ -91,32 +99,27 @@ function getAI() {
 
 async function generateQuestion(tema: string, nivel: string = "Médio") {
   const ai = getAI();
-  const schoolContext = 
-    nivel === "Fácil" ? "Stanford (foco em fundamentos claros e inovação)" :
-    nivel === "Médio" ? "MIT (foco em aplicação técnica e raciocínio lógico)" :
-    "Harvard (foco em complexidade, análise crítica e interdisciplinaridade)";
-
-  const schoolName = nivel === "Fácil" ? "Stanford" : nivel === "Médio" ? "MIT" : "Harvard";
-
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: `Crie uma questão de múltipla escolha estilo ENEM sobre: "${tema}". 
-    Nível de dificuldade: ${nivel}.
-    Contexto pedagógico: Estilo ${schoolContext}.
-    A explicação deve ser profunda, didática e refletir o rigor acadêmico da ${schoolName}.
-    Retorne APENAS JSON válido:
+    contents: `Gere uma questão estilo ENEM sobre: "${tema}". Dificuldade: ${nivel}.
+    Instruções:
+    1. Enunciado contextualizado e fiel ao estilo ENEM.
+    2. 5 alternativas (A-E).
+    3. Explicações didáticas para CADA alternativa, focando no porquê está certa ou errada.
+    4. Seção "Conceito Base": Explicação profunda do tema central.
+    5. Seção "Como não errar": Dicas práticas para identificar pegadinhas ou aplicar a lógica correta.
+    6. Retorne apenas JSON:
     {
-      "materia": "nome da matéria",
-      "enunciado": "enunciado completo",
-      "alternativas": ["A", "B", "C", "D", "E"],
-      "gabarito": 0,
-      "explicacao": "explicação detalhada e didática do porquê a alternativa está correta e as outras erradas",
-      "conceito": "conceito principal",
-      "dica": "dica para o ENEM",
-      "escola": "${schoolName}"
-    }
-    O gabarito deve ser o índice 0-4 da alternativa correta no array.`,
+      "materia": "string",
+      "enunciado": "string",
+      "alternativas": ["string", "string", "string", "string", "string"],
+      "gabarito": number (0-4),
+      "explicacoes": { "A": "string", "B": "string", "C": "string", "D": "string", "E": "string" },
+      "conceito": "string",
+      "comoNaoErrar": "string"
+    }`,
     config: {
+      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
@@ -125,12 +128,21 @@ async function generateQuestion(tema: string, nivel: string = "Médio") {
           enunciado: { type: Type.STRING },
           alternativas: { type: Type.ARRAY, items: { type: Type.STRING } },
           gabarito: { type: Type.INTEGER },
-          explicacao: { type: Type.STRING },
+          explicacoes: {
+            type: Type.OBJECT,
+            properties: {
+              A: { type: Type.STRING },
+              B: { type: Type.STRING },
+              C: { type: Type.STRING },
+              D: { type: Type.STRING },
+              E: { type: Type.STRING }
+            },
+            required: ["A", "B", "C", "D", "E"]
+          },
           conceito: { type: Type.STRING },
-          dica: { type: Type.STRING },
-          escola: { type: Type.STRING }
+          comoNaoErrar: { type: Type.STRING }
         },
-        required: ["materia", "enunciado", "alternativas", "gabarito", "explicacao", "conceito", "dica", "escola"]
+        required: ["materia", "enunciado", "alternativas", "gabarito", "explicacoes", "conceito", "comoNaoErrar"]
       }
     }
   });
@@ -141,21 +153,15 @@ async function parseEnemBulk(text: string) {
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: `Analise o seguinte texto que contém uma ou mais questões do ENEM. 
-    Separe cada questão e extraia as informações para uma lista de objetos JSON.
-    Identifique a matéria, o enunciado e crie uma descrição curta.
-    Classifique o erro como 'B' (Banal), 'L' (Lacuna) ou 'D' (Desconhecimento).
-    Retorne APENAS um array JSON válido:
-    [
-      {
-        "materia": "nome da matéria",
-        "questao": "resumo do enunciado ou número da questão",
-        "descricao": "contexto ou explicação curta do erro",
-        "tab": "B" | "L" | "D"
-      }
-    ]
+    contents: `Analise o texto (pode conter erros de PDF) e extraia questões do ENEM.
+    Instruções:
+    1. Identifique matéria e enunciado.
+    2. Classifique erro: B (Banal), L (Lacuna), D (Desconhecimento).
+    3. Retorne array JSON:
+    [{ "materia": "string", "questao": "string", "descricao": "string", "tab": "B"|"L"|"D" }]
     Texto: "${text}"`,
     config: {
+      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.ARRAY,
@@ -173,6 +179,68 @@ async function parseEnemBulk(text: string) {
     }
   });
   return JSON.parse(response.text || "[]");
+}
+
+// --- Components ---
+interface PomodoroProps {
+  timeLeft: number;
+  setTimeLeft: (t: number | ((prev: number) => number)) => void;
+  isActive: boolean;
+  setIsActive: (a: boolean) => void;
+  mode: 'foco' | 'pausa';
+  setMode: (m: 'foco' | 'pausa') => void;
+}
+
+function PomodoroTimer({ timeLeft, setTimeLeft, isActive, setIsActive, mode, setMode }: PomodoroProps) {
+  const toggleMode = () => {
+    const nextMode = mode === 'foco' ? 'pausa' : 'foco';
+    setMode(nextMode);
+    setTimeLeft(nextMode === 'foco' ? 25 * 60 : 5 * 60);
+    setIsActive(false);
+  };
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  return (
+    <div className="neo-card p-4 flex items-center justify-between bg-gradient-to-r from-tab-b/5 to-tab-l/5 border-tab-b/10">
+      <div className="flex items-center gap-3">
+        <div className={cn(
+          "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+          mode === 'foco' ? "bg-tab-d/10 text-tab-d" : "bg-green-500/10 text-green-500"
+        )}>
+          <Clock size={20} />
+        </div>
+        <div>
+          <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+            {mode === 'foco' ? 'Foco' : 'Pausa'}
+          </div>
+          <div className="font-display font-black text-xl tabular-nums">{formatTime(timeLeft)}</div>
+        </div>
+      </div>
+      
+      <div className="flex gap-2">
+        <button 
+          onClick={() => setTimeLeft(mode === 'foco' ? 25 * 60 : 5 * 60)}
+          className="p-2 text-muted-foreground hover:text-tab-l transition-colors"
+        >
+          <RotateCcw size={18} />
+        </button>
+        <button 
+          onClick={() => setIsActive(!isActive)}
+          className={cn(
+            "px-6 py-2 rounded-xl font-display font-bold text-xs transition-all",
+            isActive ? "bg-tab-d text-white" : "bg-tab-l text-white shadow-lg shadow-tab-l/20"
+          )}
+        >
+          {isActive ? 'Pausar' : 'Iniciar'}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // --- Main App Component ---
@@ -203,6 +271,7 @@ export default function App() {
   const [isParsing, setIsParsing] = useState(false);
   const [scannedResults, setScannedResults] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
+  const [isExtractingPdf, setIsExtractingPdf] = useState(false);
 
   // Practice state
   const [practiceTema, setPracticeTema] = useState('');
@@ -211,6 +280,28 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedAlt, setSelectedAlt] = useState<number | null>(null);
   const [isTestingKey, setIsTestingKey] = useState(false);
+
+  // Pomodoro state
+  const [timeLeft, setTimeLeft] = useState(25 * 60);
+  const [isActive, setIsActive] = useState(false);
+  const [mode, setMode] = useState<'foco' | 'pausa'>('foco');
+
+  // Pomodoro logic (global)
+  useEffect(() => {
+    let interval: any = null;
+    if (isActive && timeLeft > 0) {
+      interval = setInterval(() => {
+        setTimeLeft((time) => time - 1);
+      }, 1000);
+    } else if (timeLeft === 0) {
+      if (window.navigator.vibrate) window.navigator.vibrate([200, 100, 200]);
+      const nextMode = mode === 'foco' ? 'pausa' : 'foco';
+      setMode(nextMode);
+      setTimeLeft(nextMode === 'foco' ? 25 * 60 : 5 * 60);
+      setIsActive(false);
+    }
+    return () => clearInterval(interval);
+  }, [isActive, timeLeft, mode]);
 
   // Filter state
   const [filter, setFilter] = useState<string>('todos');
@@ -223,10 +314,10 @@ export default function App() {
     document.body.classList.add(`platform-${p}`);
 
     const checkKey = async () => {
-      if (window.aistudio?.hasSelectedApiKey) {
-        const has = await window.aistudio.hasSelectedApiKey();
+      if ((window as any).aistudio?.hasSelectedApiKey) {
+        const has = await (window as any).aistudio.hasSelectedApiKey();
         setHasApiKey(has);
-      } else if (localStorage.getItem('gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY) {
+      } else if (localStorage.getItem('gemini_api_key') || (import.meta as any).env.VITE_GEMINI_API_KEY) {
         setHasApiKey(true);
       }
     };
@@ -379,6 +470,34 @@ export default function App() {
       alert("Erro ao processar. Tente colar o texto novamente.");
     } finally {
       setIsParsing(false);
+    }
+  };
+
+  const handlePdfUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsExtractingPdf(true);
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+      let fullText = '';
+      
+      // Extract text from first 5 pages to avoid overload
+      const numPages = Math.min(pdf.numPages, 5);
+      for (let i = 1; i <= numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        const strings = content.items.map((item: any) => item.str);
+        fullText += strings.join(' ') + '\n';
+      }
+      
+      setScanInput(fullText);
+    } catch (error) {
+      console.error("Erro ao ler PDF:", error);
+      alert("Não foi possível extrair o texto deste PDF.");
+    } finally {
+      setIsExtractingPdf(false);
     }
   };
 
@@ -569,6 +688,15 @@ export default function App() {
                 </motion.div>
               )}
 
+              <PomodoroTimer 
+                timeLeft={timeLeft} 
+                setTimeLeft={setTimeLeft} 
+                isActive={isActive} 
+                setIsActive={setIsActive} 
+                mode={mode} 
+                setMode={setMode} 
+              />
+
               <div className="neo-card p-8 space-y-6">
                 <div className="flex justify-between items-center mb-2">
                   <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Novo Registro</h3>
@@ -669,11 +797,22 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="space-y-6 flex-1 flex flex-col">
-                        <p className="text-xs text-muted-foreground leading-relaxed">Cole o texto da prova do ENEM. Nossa IA vai separar as questões automaticamente para você organizar seus erros.</p>
+                        <div className="space-y-2">
+                          <p className="text-xs text-muted-foreground leading-relaxed">Cole o texto da prova do ENEM ou envie um PDF. Nossa IA vai separar as questões automaticamente.</p>
+                          
+                          <label className="flex items-center justify-center gap-2 p-4 border-2 border-dashed border-border rounded-2xl hover:border-tab-l transition-colors cursor-pointer group">
+                            <input type="file" accept=".pdf" onChange={handlePdfUpload} className="hidden" />
+                            <Upload size={18} className="text-muted-foreground group-hover:text-tab-l" />
+                            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-tab-l">
+                              {isExtractingPdf ? 'Extraindo...' : 'Enviar PDF'}
+                            </span>
+                          </label>
+                        </div>
+
                         <textarea 
                           value={scanInput}
                           onChange={e => setScanInput(e.target.value)}
-                          placeholder="Cole o texto aqui..."
+                          placeholder="Ou cole o texto aqui..."
                           className="flex-1 bg-surface border border-border rounded-3xl p-6 text-sm outline-none focus:border-tab-l transition-all resize-none font-medium"
                         />
                         <button 
@@ -828,6 +967,15 @@ export default function App() {
             >
               {!currentQuestion ? (
                 <div className="space-y-6">
+                  <PomodoroTimer 
+                    timeLeft={timeLeft} 
+                    setTimeLeft={setTimeLeft} 
+                    isActive={isActive} 
+                    setIsActive={setIsActive} 
+                    mode={mode} 
+                    setMode={setMode} 
+                  />
+                  
                   <div className="bg-surface-2 border border-border rounded-3xl p-8 text-center shadow-2xl">
                     <div className="w-16 h-16 bg-tab-l/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
                       <BrainCircuit size={32} className="text-tab-l" />
@@ -961,16 +1109,47 @@ export default function App() {
                       <div className="space-y-3">
                         <div className="flex items-center gap-2 mb-1">
                           <div className="h-px flex-1 bg-border" />
-                          <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Explicação {currentQuestion.escola}</span>
+                          <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Explicação Detalhada</span>
                           <div className="h-px flex-1 bg-border" />
                         </div>
-                        <p className="text-xs text-muted-foreground leading-relaxed italic">"{currentQuestion.explicacao}"</p>
-                        <div className="bg-tab-l/10 p-4 rounded-2xl border border-tab-l/20">
-                          <div className="flex justify-between items-start mb-1">
-                            <div className="text-[10px] font-bold text-tab-l uppercase tracking-widest">Conceito Chave</div>
-                            <Sparkles size={12} className="text-tab-l" />
+                        
+                        <div className="space-y-2">
+                          {Object.entries(currentQuestion.explicacoes).map(([key, text]: any) => (
+                            <div key={key} className={cn(
+                              "p-3 rounded-xl text-[11px] leading-relaxed",
+                              key === String.fromCharCode(65 + currentQuestion.gabarito) 
+                                ? "bg-green-500/10 border border-green-500/20 text-green-600 font-medium" 
+                                : "bg-surface border border-border text-muted-foreground opacity-80"
+                            )}>
+                              <span className="font-black mr-2">{key}:</span> {text}
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3">
+                          <div className="bg-blue-500/5 p-4 rounded-2xl border border-blue-500/10">
+                            <div className="flex justify-between items-start mb-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500">
+                                  <BookOpen size={14} />
+                                </div>
+                                <div className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Conceito Base</div>
+                              </div>
+                            </div>
+                            <p className="text-[11px] leading-relaxed text-foreground/80">{currentQuestion.conceito}</p>
                           </div>
-                          <p className="text-xs font-bold">{currentQuestion.conceito}</p>
+
+                          <div className="bg-amber-500/5 p-4 rounded-2xl border border-amber-500/10">
+                            <div className="flex justify-between items-start mb-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500">
+                                  <Lightbulb size={14} />
+                                </div>
+                                <div className="text-[10px] font-black text-amber-500 uppercase tracking-widest">Como não errar</div>
+                              </div>
+                            </div>
+                            <p className="text-[11px] leading-relaxed text-foreground/80">{currentQuestion.comoNaoErrar}</p>
+                          </div>
                         </div>
                       </div>
 
