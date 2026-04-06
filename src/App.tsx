@@ -9,37 +9,22 @@ import { Capacitor } from '@capacitor/core';
 import { 
   PlusCircle, 
   RotateCcw, 
-  List, 
-  Target, 
   Settings, 
   Flame, 
   CheckCircle2, 
   Trash2, 
   Search,
-  BrainCircuit,
   Clock,
   BarChart3,
   ArrowLeft,
-  Info,
-  Scan,
   X,
   Sparkles,
-  Zap,
-  Share2,
-  Check,
-  Copy,
   ChevronRight,
   LayoutGrid,
   Key,
-  FileText,
-  Upload,
-  Lightbulb,
-  BookOpen
+  Share2,
+  Check
 } from 'lucide-react';
-import * as pdfjs from 'pdfjs-dist';
-
-// Set worker for PDF.js
-pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import Markdown from 'react-markdown';
@@ -47,6 +32,7 @@ import Markdown from 'react-markdown';
 // --- Types ---
 type TabType = 'B' | 'L' | 'D';
 type Platform = 'ios' | 'android' | 'web';
+type Section = 'registrar' | 'revisao' | 'config';
 
 interface StudyError {
   id: number;
@@ -67,43 +53,10 @@ interface StreakData {
   lastDate: string;
 }
 
-interface PracticeHistory {
-  id: number;
-  tema: string;
-  materia: string;
-  enunciado: string;
-  acertou: boolean;
-  ts: number;
-}
-
 // --- Constants ---
 const STORE_KEY = 'tab_erros_v3';
 const STREAK_KEY = 'tab_streak_v3';
 const META_KEY = 'tab_meta_v3';
-const PRATICA_KEY = 'tab_pratica_v3';
-
-const SUBJECTS = [
-  { 
-    name: 'Linguagens', 
-    subs: ['Português', 'Literatura', 'Interpretação', 'Artes', 'Educação Física'],
-    color: 'blue-500'
-  },
-  { 
-    name: 'Matemática', 
-    subs: ['Álgebra', 'Geometria', 'Estatística', 'Probabilidade', 'Financeira'],
-    color: 'amber-500'
-  },
-  { 
-    name: 'Natureza', 
-    subs: ['Biologia', 'Física', 'Química', 'Ecologia', 'Genética'],
-    color: 'green-500'
-  },
-  { 
-    name: 'Humanas', 
-    subs: ['História', 'Geografia', 'Filosofia', 'Sociologia', 'Atualidades'],
-    color: 'red-500'
-  }
-];
 
 const REVIEW_INTERVALS: Record<TabType, number[]> = {
   B: [1],
@@ -116,152 +69,8 @@ function getAI() {
   const savedKey = localStorage.getItem('gemini_api_key');
   const viteEnvKey = (import.meta as any).env.VITE_GEMINI_API_KEY;
   
-  // No AI Studio environment, we use either the saved key or the VITE_ env var
   const apiKey = savedKey || viteEnvKey || "";
   return new GoogleGenAI({ apiKey });
-}
-
-async function generateQuestion(tema: string, nivel: string = "Médio") {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Gere uma questão estilo ENEM sobre: "${tema}". Dificuldade: ${nivel}.
-    Instruções:
-    1. Enunciado contextualizado, denso e fiel ao estilo ENEM (Matriz de Referência).
-    2. 5 alternativas (A-E).
-    3. Explicações analíticas para CADA alternativa, detalhando o erro lógico ou a pegadinha.
-    4. Seção "Conceito Base": Explicação teórica profunda e estruturada.
-    5. Seção "Como não errar": Estratégias de resolução e padrões de distratores.
-    6. Seção "O que o ENEM cobra": Competências e Habilidades relacionadas (ex: H12, C4).
-    7. Retorne apenas JSON:
-    {
-      "materia": "string",
-      "enunciado": "string",
-      "alternativas": ["string", "string", "string", "string", "string"],
-      "gabarito": number (0-4),
-      "explicacoes": { "A": "string", "B": "string", "C": "string", "D": "string", "E": "string" },
-      "conceito": "string",
-      "comoNaoErrar": "string",
-      "oQueCobra": "string"
-    }`,
-    config: {
-      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          materia: { type: Type.STRING },
-          enunciado: { type: Type.STRING },
-          alternativas: { type: Type.ARRAY, items: { type: Type.STRING } },
-          gabarito: { type: Type.INTEGER },
-          explicacoes: {
-            type: Type.OBJECT,
-            properties: {
-              A: { type: Type.STRING },
-              B: { type: Type.STRING },
-              C: { type: Type.STRING },
-              D: { type: Type.STRING },
-              E: { type: Type.STRING }
-            },
-            required: ["A", "B", "C", "D", "E"]
-          },
-          conceito: { type: Type.STRING },
-          comoNaoErrar: { type: Type.STRING },
-          oQueCobra: { type: Type.STRING }
-        },
-        required: ["materia", "enunciado", "alternativas", "gabarito", "explicacoes", "conceito", "comoNaoErrar", "oQueCobra"]
-      }
-    }
-  });
-  return JSON.parse(response.text || "{}");
-}
-
-async function generateLesson(tema: string) {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Crie uma aula MASTERCLASS e profunda sobre: "${tema}".
-    Estrutura:
-    1. Introdução Histórica/Contextual.
-    2. Teoria Aprofundada (Explicar o "porquê" e não apenas o "o quê").
-    3. Conexões Interdisciplinares (Como isso se liga a outras matérias).
-    4. Mapa Mental Textual (Estrutura hierárquica).
-    5. Erros Críticos (Onde 90% dos alunos falham).
-    6. Resumo "Flash" para revisão rápida.
-    Retorne em Markdown rico e bem formatado.`,
-    config: {
-      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
-    }
-  });
-  return response.text;
-}
-
-async function generateFlashcards(tema: string) {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Gere 5 flashcards de revisão ativa (Active Recall) sobre: "${tema}".
-    Cada flashcard deve ter uma pergunta desafiadora (Frente) e uma resposta detalhada e explicativa (Verso).
-    Retorne apenas JSON:
-    {
-      "flashcards": [
-        { "frente": "string", "verso": "string" }
-      ]
-    }`,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          flashcards: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                frente: { type: Type.STRING },
-                verso: { type: Type.STRING }
-              },
-              required: ["frente", "verso"]
-            }
-          }
-        },
-        required: ["flashcards"]
-      }
-    }
-  });
-  return JSON.parse(response.text || "{}");
-}
-
-async function parseEnemBulk(text: string) {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Analise o texto (pode conter erros de PDF) e extraia questões do ENEM.
-    Instruções:
-    1. Identifique matéria e enunciado.
-    2. Classifique erro: B (Banal), L (Lacuna), D (Desconhecimento).
-    3. Retorne array JSON:
-    [{ "materia": "string", "questao": "string", "descricao": "string", "tab": "B"|"L"|"D" }]
-    Texto: "${text}"`,
-    config: {
-      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            materia: { type: Type.STRING },
-            questao: { type: Type.STRING },
-            descricao: { type: Type.STRING },
-            tab: { type: Type.STRING, enum: ["B", "L", "D"] }
-          },
-          required: ["materia", "questao", "descricao", "tab"]
-        }
-      }
-    }
-  });
-  return JSON.parse(response.text || "[]");
 }
 
 // --- Components ---
@@ -328,15 +137,11 @@ function PomodoroTimer({ timeLeft, setTimeLeft, isActive, setIsActive, mode, set
 
 // --- Main App Component ---
 export default function App() {
-  const [activeSection, setActiveSection] = useState<'registrar' | 'revisao' | 'lista' | 'pratica' | 'config'>('registrar');
+  const [activeSection, setActiveSection] = useState<Section>('registrar');
   const [errors, setErrors] = useState<StudyError[]>([]);
   const [streak, setStreak] = useState<StreakData>({ streak: 0, lastDate: '' });
   const [meta, setMeta] = useState<number>(0);
-  const [praticaHist, setPraticaHist] = useState<PracticeHistory[]>([]);
   const [platform, setPlatform] = useState<Platform>('web');
-  const [hasApiKey, setHasApiKey] = useState(false);
-  const [manualApiKey, setManualApiKey] = useState(localStorage.getItem('gemini_api_key') || "");
-  const [showKeyInput, setShowKeyInput] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -348,33 +153,7 @@ export default function App() {
     tab: 'B' as TabType
   });
 
-  // Scanner state
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanInput, setScanInput] = useState('');
-  const [isParsing, setIsParsing] = useState(false);
-  const [scannedResults, setScannedResults] = useState<any[]>([]);
-  const [copied, setCopied] = useState(false);
-  const [isExtractingPdf, setIsExtractingPdf] = useState(false);
-
-  // Practice state
-  const [practiceTema, setPracticeTema] = useState('');
-  const [practiceNivel, setPracticeNivel] = useState<'Fácil' | 'Médio' | 'Difícil'>('Médio');
-  const [currentQuestion, setCurrentQuestion] = useState<any>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [selectedAlt, setSelectedAlt] = useState<number | null>(null);
   const [isTestingKey, setIsTestingKey] = useState(false);
-
-  // Lesson state
-  const [lessonContent, setLessonContent] = useState<string | null>(null);
-  const [isGeneratingLesson, setIsGeneratingLesson] = useState(false);
-  const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
-  const [selectedSub, setSelectedSub] = useState<string | null>(null);
-
-  // Flashcards state
-  const [flashcards, setFlashcards] = useState<any[] | null>(null);
-  const [isGeneratingFlashcards, setIsGeneratingFlashcards] = useState(false);
-  const [currentFlashcardIndex, setCurrentFlashcardIndex] = useState(0);
-  const [showFlashcardBack, setShowFlashcardBack] = useState(false);
 
   // Pomodoro state
   const [timeLeft, setTimeLeft] = useState(25 * 60);
@@ -407,49 +186,7 @@ export default function App() {
     const p = Capacitor.getPlatform() as Platform;
     setPlatform(p);
     document.body.classList.add(`platform-${p}`);
-
-    const checkKey = async () => {
-      if ((window as any).aistudio?.hasSelectedApiKey) {
-        const has = await (window as any).aistudio.hasSelectedApiKey();
-        setHasApiKey(has);
-      } else if (localStorage.getItem('gemini_api_key') || (import.meta as any).env.VITE_GEMINI_API_KEY) {
-        setHasApiKey(true);
-      }
-    };
-    checkKey();
   }, []);
-
-  const saveManualKey = () => {
-    if (manualApiKey.trim()) {
-      localStorage.setItem('gemini_api_key', manualApiKey.trim());
-      setHasApiKey(true);
-      setShowKeyInput(false);
-      alert("Chave salva com sucesso!");
-    } else {
-      localStorage.removeItem('gemini_api_key');
-      setHasApiKey(false);
-      alert("Chave removida. Usando padrão do sistema.");
-    }
-  };
-
-  const testKey = async () => {
-    setIsTestingKey(true);
-    try {
-      const ai = getAI();
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: "Diga 'OK' se você estiver funcionando.",
-      });
-      if (response.text) {
-        alert("Conexão bem-sucedida! A IA está respondendo corretamente.");
-      }
-    } catch (error) {
-      console.error(error);
-      alert("Erro na conexão. Verifique sua chave e tente novamente.");
-    } finally {
-      setIsTestingKey(false);
-    }
-  };
 
   // Load data
   useEffect(() => {
@@ -461,9 +198,6 @@ export default function App() {
 
     const savedMeta = localStorage.getItem(META_KEY);
     if (savedMeta) setMeta(parseInt(savedMeta));
-
-    const savedPratica = localStorage.getItem(PRATICA_KEY);
-    if (savedPratica) setPraticaHist(JSON.parse(savedPratica));
   }, []);
 
   // Persist data
@@ -474,10 +208,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(STREAK_KEY, JSON.stringify(streak));
   }, [streak]);
-
-  useEffect(() => {
-    localStorage.setItem(PRATICA_KEY, JSON.stringify(praticaHist));
-  }, [praticaHist]);
 
   // Helper: Proxima Revisão
   const getProximaRevisao = (item: StudyError) => {
@@ -532,85 +262,6 @@ export default function App() {
     if (window.navigator.vibrate) window.navigator.vibrate(5);
   };
 
-  const handleScan = async () => {
-    if (!scanInput) return;
-    setIsParsing(true);
-    try {
-      const results = await parseEnemBulk(scanInput);
-      
-      if (activeSection === 'pratica') {
-        if (results.length > 0) {
-          setPracticeTema(results[0].questao || results[0].materia);
-          setIsScanning(false);
-          setScanInput('');
-        }
-        return;
-      }
-
-      if (results.length === 1) {
-        setFormData({
-          ...formData,
-          materia: results[0].materia,
-          questao: results[0].questao,
-          descricao: results[0].descricao,
-          tab: results[0].tab
-        });
-        setIsScanning(false);
-        setScanInput('');
-      } else {
-        setScannedResults(results);
-      }
-    } catch (error) {
-      console.error(error);
-      alert("Erro ao processar. Tente colar o texto novamente.");
-    } finally {
-      setIsParsing(false);
-    }
-  };
-
-  const handlePdfUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsExtractingPdf(true);
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-      let fullText = '';
-      
-      // Extract text from first 5 pages to avoid overload
-      const numPages = Math.min(pdf.numPages, 5);
-      for (let i = 1; i <= numPages; i++) {
-        const page = await pdf.getPage(i);
-        const content = await page.getTextContent();
-        const strings = content.items.map((item: any) => item.str);
-        fullText += strings.join(' ') + '\n';
-      }
-      
-      setScanInput(fullText);
-    } catch (error) {
-      console.error("Erro ao ler PDF:", error);
-      alert("Não foi possível extrair o texto deste PDF.");
-    } finally {
-      setIsExtractingPdf(false);
-    }
-  };
-
-  const handleSaveScanned = (item: any) => {
-    const now = new Date();
-    const newError: StudyError = {
-      id: Date.now() + Math.random(),
-      ...item,
-      data: now.toLocaleDateString('pt-BR'),
-      ts: now.getTime(),
-      resolved: false,
-      revisoes: []
-    };
-    setErrors(prev => [newError, ...prev]);
-    setScannedResults(prev => prev.filter(i => i !== item));
-    if (window.navigator.vibrate) window.navigator.vibrate(5);
-  };
-
   const handleShare = async () => {
     const url = window.location.href;
     if (navigator.share) {
@@ -625,8 +276,7 @@ export default function App() {
       }
     } else {
       navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      alert("Link copiado!");
     }
   };
 
@@ -640,81 +290,6 @@ export default function App() {
       setErrors(errors.filter(e => e.id !== id));
     }
   };
-
-  const handlePractice = async () => {
-    if (!practiceTema) return;
-    setIsGenerating(true);
-    setCurrentQuestion(null);
-    setSelectedAlt(null);
-    try {
-      const q = await generateQuestion(practiceTema, practiceNivel);
-      setCurrentQuestion(q);
-    } catch (error) {
-      console.error(error);
-      alert("Erro ao gerar questão. Tente novamente.");
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const handleAnswer = (idx: number) => {
-    if (selectedAlt !== null) return;
-    setSelectedAlt(idx);
-    const acertou = idx === currentQuestion.gabarito;
-    setPraticaHist([{
-      id: Date.now(),
-      tema: practiceTema,
-      materia: currentQuestion.materia,
-      enunciado: currentQuestion.enunciado,
-      acertou,
-      ts: Date.now()
-    }, ...praticaHist]);
-    if (window.navigator.vibrate) window.navigator.vibrate(acertou ? [10, 30, 10] : 50);
-  };
-
-  const handleLesson = async () => {
-    const tema = selectedSub || practiceTema;
-    if (!tema) return;
-    setIsGeneratingLesson(true);
-    setLessonContent(null);
-    try {
-      const content = await generateLesson(tema);
-      setLessonContent(content);
-    } catch (error) {
-      console.error(error);
-      alert("Erro ao gerar aula. Tente novamente.");
-    } finally {
-      setIsGeneratingLesson(false);
-    }
-  };
-
-  const handleFlashcards = async () => {
-    const tema = selectedSub || practiceTema;
-    if (!tema) return;
-    setIsGeneratingFlashcards(true);
-    setFlashcards(null);
-    setCurrentFlashcardIndex(0);
-    setShowFlashcardBack(false);
-    try {
-      const data = await generateFlashcards(tema);
-      setFlashcards(data.flashcards);
-    } catch (error) {
-      console.error(error);
-      alert("Erro ao gerar flashcards.");
-    } finally {
-      setIsGeneratingFlashcards(false);
-    }
-  };
-
-  const masteryByTopic = useMemo(() => {
-    const stats: Record<string, { total: number, correct: number }> = {};
-    praticaHist.forEach(h => {
-      if (!stats[h.tema]) stats[h.tema] = { total: 0, correct: 0 };
-      stats[h.tema].total++;
-      if (h.acertou) stats[h.tema].correct++;
-    });
-    return stats;
-  }, [praticaHist]);
 
   const filteredErrors = useMemo(() => {
     return errors.filter(e => {
@@ -741,15 +316,9 @@ export default function App() {
           "flex items-center justify-between w-full",
           platform === 'android' ? "gap-4" : ""
         )}>
-          {currentQuestion && activeSection === 'pratica' ? (
-            <button onClick={() => setCurrentQuestion(null)} className="p-2 -ml-2 text-tab-l active:bg-tab-l/10 rounded-full transition-colors">
-              <ArrowLeft size={24} />
-            </button>
-          ) : null}
-          
           <div className={cn(
             "flex items-baseline gap-1 font-display font-extrabold text-xl",
-            platform === 'android' && !currentQuestion ? "flex-1" : ""
+            platform === 'android' ? "flex-1" : ""
           )}>
             <span className="text-tab-b">T</span>
             <span className="text-tab-l">A</span>
@@ -757,19 +326,15 @@ export default function App() {
             {platform === 'android' && (
               <span className="ml-2 text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] opacity-40">
                 {activeSection === 'registrar' ? 'Início' : 
-                 activeSection === 'revisao' ? 'Memoris' :
-                 activeSection === 'lista' ? 'Erros' :
-                 activeSection === 'pratica' ? 'Prática' : 'Mais'}
+                 activeSection === 'revisao' ? 'Memoris' : 'Mais'}
               </span>
             )}
           </div>
           
-          {platform === 'ios' && !currentQuestion && (
+          {platform === 'ios' && (
             <div className="absolute left-1/2 -translate-x-1/2 font-display font-bold text-xs uppercase tracking-[0.15em] opacity-60">
               {activeSection === 'registrar' ? 'Novo Erro' : 
-               activeSection === 'revisao' ? 'Memoris' :
-               activeSection === 'lista' ? 'Meus Erros' :
-               activeSection === 'pratica' ? 'Prática' : 'Mais'}
+               activeSection === 'revisao' ? 'Memoris' : 'Mais'}
             </div>
           )}
 
@@ -778,7 +343,7 @@ export default function App() {
               onClick={handleShare}
               className="p-2 text-muted-foreground active:text-tab-l transition-colors"
             >
-              {copied ? <Check size={18} className="text-green-500" /> : <Share2 size={18} />}
+              <Share2 size={18} />
             </button>
             <div className="flex items-center gap-2 bg-tab-b/10 border border-tab-b/20 rounded-full px-3 py-1 text-tab-b text-[10px] font-bold">
               <Flame size={12} />
@@ -805,54 +370,37 @@ export default function App() {
           {activeSection === 'registrar' && (
             <motion.div 
               key="registrar"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
               className="space-y-6"
             >
               {dueErrors.length > 0 && (
                 <motion.div 
                   whileTap={{ scale: 0.98 }}
                   onClick={() => setActiveSection('revisao')}
-                  className="bg-gradient-to-br from-tab-l/20 to-purple-500/10 border border-tab-l/30 rounded-3xl p-6 flex items-center justify-between cursor-pointer"
+                  className="bg-tab-l text-white rounded-3xl p-6 flex items-center justify-between cursor-pointer shadow-xl shadow-tab-l/20"
                 >
                   <div>
                     <div className="font-display font-bold text-base flex items-center gap-2">
-                      <Sparkles size={18} className="text-tab-l" />
-                      Memoris
+                      <Sparkles size={18} />
+                      Revisão Pendente
                     </div>
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest mt-1">Sessão de revisão pendente</div>
+                    <div className="text-[10px] opacity-70 uppercase tracking-widest mt-1">Sua memória precisa de você</div>
                   </div>
-                  <div className="font-display font-extrabold text-4xl text-tab-l">{dueErrors.length}</div>
+                  <div className="font-display font-extrabold text-4xl">{dueErrors.length}</div>
                 </motion.div>
               )}
-
-              <PomodoroTimer 
-                timeLeft={timeLeft} 
-                setTimeLeft={setTimeLeft} 
-                isActive={isActive} 
-                setIsActive={setIsActive} 
-                mode={mode} 
-                setMode={setMode} 
-              />
 
               <div className="neo-card p-8 space-y-6">
                 <div className="flex justify-between items-center mb-2">
                   <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Novo Registro</h3>
-                  <button 
-                    onClick={() => setIsScanning(true)}
-                    className="flex items-center gap-2 text-tab-l text-[10px] font-black uppercase tracking-widest bg-tab-l/10 px-4 py-2 rounded-xl"
-                  >
-                    <Scan size={14} />
-                    Escanear ENEM
-                  </button>
                 </div>
 
                 <div className="space-y-4">
-                  <InputGroup label="Matéria" value={formData.materia} onChange={v => setFormData({...formData, materia: v})} placeholder="Ex: Matemática..." />
-                  <InputGroup label="Questão / Tópico" value={formData.questao} onChange={v => setFormData({...formData, questao: v})} placeholder="Ex: Questão 42..." />
+                  <InputGroup label="Matéria" value={formData.materia} onChange={v => setFormData({...formData, materia: v})} placeholder="Ex: Biologia" />
+                  <InputGroup label="O que você errou?" value={formData.descricao} onChange={v => setFormData({...formData, descricao: v})} placeholder="Descreva o erro..." />
                   
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="flex gap-2">
                     {(['B', 'L', 'D'] as TabType[]).map(t => (
                       <TabButton key={t} type={t} active={formData.tab === t} onClick={() => setFormData({...formData, tab: t})} />
                     ))}
@@ -860,122 +408,32 @@ export default function App() {
 
                   <button 
                     onClick={handleSaveError}
-                    className="w-full bg-gradient-to-br from-tab-l to-purple-500 text-white font-display font-bold py-5 rounded-[1.5rem] shadow-2xl shadow-tab-l/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                    disabled={!formData.materia || !formData.descricao}
+                    className="w-full bg-foreground text-bg font-display font-bold py-5 rounded-[1.5rem] active:scale-[0.98] transition-all disabled:opacity-30"
                   >
-                    <PlusCircle size={20} />
-                    Salvar Registro
+                    SALVAR ERRO
                   </button>
                 </div>
               </div>
 
-              {isScanning && (
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="fixed inset-0 z-50 bg-bg/95 flex items-center justify-center p-6 backdrop-blur-2xl"
-                >
-                  <div className="w-full max-w-sm space-y-6 max-h-[90vh] flex flex-col">
-                    <div className="flex justify-between items-center shrink-0">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-2xl bg-tab-l/10 flex items-center justify-center text-tab-l">
-                          <Scan size={20} />
-                        </div>
-                        <h3 className="font-display font-bold text-xl">Scanner ENEM</h3>
-                      </div>
-                      <button onClick={() => { setIsScanning(false); setScannedResults([]); }} className="text-muted-foreground p-2">
-                        <X size={24} />
-                      </button>
+              <div className="flex justify-between items-center px-4">
+                <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Últimos Erros</h3>
+                <button onClick={() => setActiveSection('config')} className="text-[10px] font-black uppercase tracking-widest text-tab-l">Ver Todos</button>
+              </div>
+
+              <div className="space-y-2 px-2">
+                {errors.slice(0, 3).map(error => (
+                  <div key={error.id} className="bg-surface/50 border border-border rounded-2xl p-4 flex items-center gap-4">
+                    <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center font-display font-black", `bg-tab-${error.tab.toLowerCase()}/10 text-tab-${error.tab.toLowerCase()}`)}>
+                      {error.tab}
                     </div>
-
-                    {scannedResults.length > 0 ? (
-                      <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-tab-l">Questões Detectadas ({scannedResults.length})</p>
-                        {scannedResults.map((res, i) => (
-                          <motion.div 
-                            key={i}
-                            initial={{ opacity: 0, x: -10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            transition={{ delay: i * 0.1 }}
-                            className="neo-card p-4 space-y-3"
-                          >
-                            <div className="flex justify-between items-start gap-2">
-                              <span className="text-[10px] font-bold px-2 py-1 bg-tab-l/10 text-tab-l rounded-lg uppercase">{res.materia}</span>
-                              <div className="flex gap-1">
-                                <span className={cn(
-                                  "w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-black",
-                                  res.tab === 'B' ? "bg-tab-b/20 text-tab-b" :
-                                  res.tab === 'L' ? "bg-tab-l/20 text-tab-l" : "bg-tab-d/20 text-tab-d"
-                                )}>
-                                  {res.tab}
-                                </span>
-                              </div>
-                            </div>
-                            <h4 className="text-sm font-bold leading-tight">{res.questao}</h4>
-                            <p className="text-[11px] text-muted-foreground line-clamp-2">{res.descricao}</p>
-                            <button 
-                              onClick={() => handleSaveScanned(res)}
-                              className="w-full py-3 bg-tab-l/10 hover:bg-tab-l/20 text-tab-l text-[11px] font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
-                            >
-                              <PlusCircle size={14} />
-                              SALVAR ESTA
-                            </button>
-                          </motion.div>
-                        ))}
-                        {scannedResults.length > 0 && (
-                          <button 
-                            onClick={() => {
-                              scannedResults.forEach(handleSaveScanned);
-                              setIsScanning(false);
-                              setScannedResults([]);
-                            }}
-                            className="w-full py-4 bg-tab-l text-white font-display font-bold rounded-2xl shadow-xl shadow-tab-l/20"
-                          >
-                            SALVAR TODAS ({scannedResults.length})
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="space-y-6 flex-1 flex flex-col">
-                        <div className="space-y-2">
-                          <p className="text-xs text-muted-foreground leading-relaxed">Cole o texto da prova do ENEM ou envie um PDF. Nossa IA vai separar as questões automaticamente.</p>
-                          
-                          <label className="flex items-center justify-center gap-2 p-4 border-2 border-dashed border-border rounded-2xl hover:border-tab-l transition-colors cursor-pointer group">
-                            <input type="file" accept=".pdf" onChange={handlePdfUpload} className="hidden" />
-                            <Upload size={18} className="text-muted-foreground group-hover:text-tab-l" />
-                            <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-tab-l">
-                              {isExtractingPdf ? 'Extraindo...' : 'Enviar PDF'}
-                            </span>
-                          </label>
-                        </div>
-
-                        <textarea 
-                          value={scanInput}
-                          onChange={e => setScanInput(e.target.value)}
-                          placeholder="Ou cole o texto aqui..."
-                          className="flex-1 bg-surface border border-border rounded-3xl p-6 text-sm outline-none focus:border-tab-l transition-all resize-none font-medium"
-                        />
-                        <button 
-                          onClick={handleScan}
-                          disabled={isParsing || !scanInput}
-                          className="w-full bg-tab-l text-white font-display font-bold py-5 rounded-2xl shadow-xl shadow-tab-l/20 disabled:opacity-50 flex items-center justify-center gap-2 shrink-0"
-                        >
-                          {isParsing ? (
-                            <>
-                              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                              <span>Processando...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Zap size={18} />
-                              <span>ANALISAR PROVA</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-xs truncate">{error.materia}</div>
+                      <div className="text-[9px] text-muted-foreground truncate">{error.questao || 'Sem ID'}</div>
+                    </div>
                   </div>
-                </motion.div>
-              )}
+                ))}
+              </div>
             </motion.div>
           )}
 
@@ -1034,437 +492,6 @@ export default function App() {
             </motion.div>
           )}
 
-          {activeSection === 'lista' && (
-            <motion.div 
-              key="lista"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="space-y-4"
-            >
-              <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <input 
-                  type="text" 
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder="Buscar erro..."
-                  className="w-full bg-surface border border-border rounded-2xl pl-10 pr-4 py-3 text-sm outline-none focus:border-tab-l transition-all"
-                />
-              </div>
-
-              <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                {['todos', 'B', 'L', 'D', 'pendente', 'resolvido'].map(f => (
-                  <button 
-                    key={f}
-                    onClick={() => setFilter(f)}
-                    className={cn(
-                      "text-[10px] px-4 py-2 rounded-full border whitespace-nowrap transition-all font-bold uppercase tracking-wider",
-                      filter === f ? "bg-tab-l border-tab-l text-white" : "bg-surface border-border text-muted-foreground"
-                    )}
-                  >
-                    {f}
-                  </button>
-                ))}
-              </div>
-
-              <div className="space-y-2">
-                {filteredErrors.map(error => (
-                  <div key={error.id} className={cn(
-                    "bg-surface border border-border rounded-2xl p-4 flex items-center gap-4 active:scale-[0.99] transition-all",
-                    error.resolved && "opacity-40 grayscale"
-                  )}>
-                    <div className={cn(
-                      "w-12 h-12 rounded-xl flex items-center justify-center font-display font-extrabold text-xl",
-                      `bg-tab-${error.tab.toLowerCase()}/10 text-tab-${error.tab.toLowerCase()}`
-                    )}>
-                      {error.tab}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-bold text-sm truncate">{error.materia}</div>
-                      <div className="text-[10px] text-muted-foreground truncate">{error.questao}</div>
-                    </div>
-                    <div className="flex gap-1">
-                      <button onClick={() => handleToggleResolve(error.id)} className="p-2 text-muted-foreground active:text-green-500">
-                        <CheckCircle2 size={20} className={error.resolved ? 'text-green-500' : ''} />
-                      </button>
-                      <button onClick={() => handleDelete(error.id)} className="p-2 text-muted-foreground active:text-tab-d">
-                        <Trash2 size={20} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </motion.div>
-          )}
-
-          {activeSection === 'pratica' && (
-            <motion.div 
-              key="pratica"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="space-y-4"
-            >
-              {flashcards ? (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="space-y-6"
-                >
-                  <div className="flex justify-between items-center px-2">
-                    <button onClick={() => setFlashcards(null)} className="text-[10px] font-black text-tab-l uppercase tracking-widest flex items-center gap-1">
-                      <ArrowLeft size={12} /> Sair
-                    </button>
-                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Flashcard {currentFlashcardIndex + 1} de {flashcards.length}</span>
-                  </div>
-
-                  <div 
-                    onClick={() => setShowFlashcardBack(!showFlashcardBack)}
-                    className="perspective-1000 cursor-pointer h-64"
-                  >
-                    <motion.div 
-                      animate={{ rotateY: showFlashcardBack ? 180 : 0 }}
-                      transition={{ duration: 0.6, type: "spring", stiffness: 260, damping: 20 }}
-                      className="relative w-full h-full preserve-3d"
-                    >
-                      {/* Front */}
-                      <div className="absolute inset-0 backface-hidden bg-surface border-2 border-tab-l rounded-[2.5rem] p-8 flex flex-col items-center justify-center text-center shadow-2xl">
-                        <div className="text-[10px] font-black text-tab-l uppercase tracking-widest mb-4">Pergunta</div>
-                        <p className="text-lg font-display font-bold leading-tight">{flashcards[currentFlashcardIndex].frente}</p>
-                        <div className="mt-8 text-[8px] font-bold text-muted-foreground uppercase tracking-widest animate-pulse">Toque para virar</div>
-                      </div>
-                      {/* Back */}
-                      <div className="absolute inset-0 backface-hidden bg-surface-2 border-2 border-green-500 rounded-[2.5rem] p-8 flex flex-col items-center justify-center text-center shadow-2xl rotate-y-180">
-                        <div className="text-[10px] font-black text-green-500 uppercase tracking-widest mb-4">Resposta</div>
-                        <p className="text-sm font-medium leading-relaxed">{flashcards[currentFlashcardIndex].verso}</p>
-                      </div>
-                    </motion.div>
-                  </div>
-
-                  <div className="flex gap-4">
-                    <button 
-                      disabled={currentFlashcardIndex === 0}
-                      onClick={() => { setCurrentFlashcardIndex(i => i - 1); setShowFlashcardBack(false); }}
-                      className="flex-1 bg-surface border border-border py-4 rounded-2xl font-bold disabled:opacity-30"
-                    >
-                      Anterior
-                    </button>
-                    <button 
-                      onClick={() => { 
-                        if (currentFlashcardIndex < flashcards.length - 1) {
-                          setCurrentFlashcardIndex(i => i + 1);
-                          setShowFlashcardBack(false);
-                        } else {
-                          setFlashcards(null);
-                        }
-                      }}
-                      className="flex-1 bg-tab-l text-white py-4 rounded-2xl font-bold"
-                    >
-                      {currentFlashcardIndex < flashcards.length - 1 ? 'Próximo' : 'Finalizar'}
-                    </button>
-                  </div>
-                </motion.div>
-              ) : lessonContent ? (
-                <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="bg-surface border border-border rounded-3xl p-6 shadow-xl relative"
-                >
-                  <button 
-                    onClick={() => setLessonContent(null)}
-                    className="absolute top-4 right-4 p-2 text-muted-foreground hover:text-tab-l"
-                  >
-                    <X size={20} />
-                  </button>
-                  <div className="prose prose-sm dark:prose-invert max-w-none markdown-body">
-                    <Markdown>{lessonContent}</Markdown>
-                  </div>
-                  <button 
-                    onClick={() => { setLessonContent(null); handlePractice(); }}
-                    className="w-full mt-8 bg-tab-l text-white font-display font-bold py-4 rounded-2xl active:scale-95 transition-all"
-                  >
-                    Praticar com Questão
-                  </button>
-                </motion.div>
-              ) : !currentQuestion ? (
-                <div className="space-y-6">
-                  <PomodoroTimer 
-                    timeLeft={timeLeft} 
-                    setTimeLeft={setTimeLeft} 
-                    isActive={isActive} 
-                    setIsActive={setIsActive} 
-                    mode={mode} 
-                    setMode={setMode} 
-                  />
-                  
-                  <div className="bg-surface-2 border border-border rounded-3xl p-8 text-center shadow-2xl">
-                    <div className="w-16 h-16 bg-tab-l/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                      <BrainCircuit size={32} className="text-tab-l" />
-                    </div>
-                    <h3 className="font-display font-bold text-lg mb-2">Prática Inteligente</h3>
-                    <p className="text-xs text-muted-foreground mb-6 leading-relaxed">A IA gera questões e aulas personalizadas para você dominar qualquer tema.</p>
-                    
-                    {!selectedSubject ? (
-                      <div className="grid grid-cols-2 gap-3 mb-6">
-                        {SUBJECTS.map(s => (
-                          <button
-                            key={s.name}
-                            onClick={() => setSelectedSubject(s.name)}
-                            className={cn(
-                              "p-4 rounded-2xl border-2 border-border bg-surface hover:border-tab-l transition-all text-center group",
-                              `hover:bg-${s.color}/5`
-                            )}
-                          >
-                            <div className={cn("font-display font-black text-lg mb-1", `text-${s.color}`)}>{s.name}</div>
-                            <div className="text-[8px] font-bold uppercase tracking-widest opacity-40">Explorar</div>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="mb-6 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <button onClick={() => { setSelectedSubject(null); setSelectedSub(null); }} className="text-[10px] font-black text-tab-l uppercase tracking-widest flex items-center gap-1">
-                            <ArrowLeft size={12} /> Voltar
-                          </button>
-                          <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{selectedSubject}</span>
-                        </div>
-                        <div className="flex flex-wrap gap-2 justify-center">
-                          {SUBJECTS.find(s => s.name === selectedSubject)?.subs.map(sub => (
-                            <button
-                              key={sub}
-                              onClick={() => { setSelectedSub(sub); setPracticeTema(sub); }}
-                              className={cn(
-                                "px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all border flex flex-col items-center gap-1",
-                                selectedSub === sub ? "bg-tab-l border-tab-l text-white" : "bg-surface border-border text-muted-foreground"
-                              )}
-                            >
-                              <span>{sub}</span>
-                              {masteryByTopic[sub] && (
-                                <div className="w-12 h-1 bg-black/20 rounded-full overflow-hidden">
-                                  <div 
-                                    className="h-full bg-white transition-all" 
-                                    style={{ width: `${(masteryByTopic[sub].correct / masteryByTopic[sub].total) * 100}%` }}
-                                  />
-                                </div>
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="relative mb-4">
-                      <input 
-                        type="text" 
-                        value={practiceTema}
-                        onChange={e => { setPracticeTema(e.target.value); setSelectedSub(null); }}
-                        placeholder="Ou digite um tema livre..."
-                        className="w-full bg-surface border border-border rounded-2xl p-4 pr-12 text-sm outline-none focus:border-tab-l text-center font-bold"
-                      />
-                      <button 
-                        onClick={() => setIsScanning(true)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-tab-l active:scale-90 transition-all"
-                      >
-                        <Scan size={20} />
-                      </button>
-                    </div>
-
-                    <div className="flex gap-2 mb-6">
-                      {[
-                        { n: 'Fácil', s: 'Stanford', d: 'Fundamentos' },
-                        { n: 'Médio', s: 'MIT', d: 'Raciocínio' },
-                        { n: 'Difícil', s: 'Harvard', d: 'Análise' }
-                      ].map(({ n, s, d }) => (
-                        <button
-                          key={n}
-                          onClick={() => setPracticeNivel(n as any)}
-                          className={cn(
-                            "flex-1 py-3 rounded-xl transition-all border-2 flex flex-col items-center gap-0.5",
-                            practiceNivel === n 
-                              ? "bg-tab-l/20 border-tab-l text-tab-l" 
-                              : "bg-surface border-border text-muted-foreground opacity-50"
-                          )}
-                        >
-                          <span className="text-[10px] font-black uppercase tracking-widest leading-none">{n}</span>
-                          <span className="text-[8px] font-bold opacity-80 leading-none">{s}</span>
-                          <span className="text-[6px] font-medium opacity-40 uppercase tracking-tighter leading-none">{d}</span>
-                        </button>
-                      ))}
-                    </div>
-                    
-                    <div className="grid grid-cols-1 gap-2">
-                      <button 
-                        onClick={handlePractice}
-                        disabled={isGenerating || isGeneratingLesson || isGeneratingFlashcards || !practiceTema}
-                        className="w-full bg-tab-l text-white font-display font-bold py-4 rounded-2xl disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-2"
-                      >
-                        {isGenerating ? 'Gerando...' : 'Gerar Questão'}
-                      </button>
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={handleLesson}
-                          disabled={isGenerating || isGeneratingLesson || isGeneratingFlashcards || !practiceTema}
-                          className="flex-1 bg-surface border border-border text-foreground font-display font-bold py-4 rounded-2xl disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-2"
-                        >
-                          {isGeneratingLesson ? 'Gerando...' : 'Ver Aula'}
-                        </button>
-                        <button 
-                          onClick={handleFlashcards}
-                          disabled={isGenerating || isGeneratingLesson || isGeneratingFlashcards || !practiceTema}
-                          className="flex-1 bg-surface border border-border text-foreground font-display font-bold py-4 rounded-2xl disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-2"
-                        >
-                          {isGeneratingFlashcards ? 'Gerando...' : 'Flashcards'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {praticaHist.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground px-1">Últimos Treinos</h4>
-                      {praticaHist.slice(0, 3).map(h => (
-                        <div key={h.id} className="bg-surface border border-border rounded-2xl p-4 flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className={cn("w-2 h-2 rounded-full", h.acertou ? "bg-green-500" : "bg-tab-d")} />
-                            <div className="text-xs font-bold">{h.tema}</div>
-                          </div>
-                          <div className="text-[10px] text-muted-foreground">{new Date(h.ts).toLocaleDateString()}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <motion.div 
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="bg-surface border border-border rounded-3xl p-6 shadow-xl"
-                  >
-                    <div className="flex justify-between items-center mb-4">
-                      <span className="text-[10px] font-bold text-tab-l uppercase tracking-widest">{currentQuestion.materia}</span>
-                      <div className="text-[10px] text-muted-foreground font-mono">ESTILO ENEM</div>
-                    </div>
-                    
-                    <div className="text-sm leading-relaxed mb-8 font-medium">{currentQuestion.enunciado}</div>
-                    
-                    <div className="space-y-3">
-                      {currentQuestion.alternativas.map((alt: string, i: number) => {
-                        let status = "default";
-                        if (selectedAlt !== null) {
-                          if (i === currentQuestion.gabarito) status = "correct";
-                          else if (i === selectedAlt) status = "wrong";
-                          else status = "disabled";
-                        }
-
-                        return (
-                          <button
-                            key={i}
-                            onClick={() => handleAnswer(i)}
-                            disabled={selectedAlt !== null}
-                            className={cn(
-                              "w-full text-left p-4 rounded-2xl border-2 transition-all flex gap-4 items-start",
-                              status === "default" && "border-border bg-surface active:bg-surface-2",
-                              status === "correct" && "border-green-500 bg-green-500/10 scale-[1.02]",
-                              status === "wrong" && "border-tab-d bg-tab-d/10",
-                              status === "disabled" && "border-border opacity-30 grayscale"
-                            )}
-                          >
-                            <span className={cn(
-                              "font-display font-black text-lg",
-                              status === "correct" ? "text-green-500" : "text-muted-foreground"
-                            )}>{String.fromCharCode(65 + i)}</span>
-                            <span className="text-xs font-medium leading-snug">{alt}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </motion.div>
-
-                  {selectedAlt !== null && (
-                    <motion.div 
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      className="bg-surface-2 border border-border rounded-3xl p-6 space-y-4 shadow-2xl"
-                    >
-                      <div className={cn(
-                        "text-lg font-display font-black text-center",
-                        selectedAlt === currentQuestion.gabarito ? "text-green-500" : "text-tab-d"
-                      )}>
-                        {selectedAlt === currentQuestion.gabarito ? 'ACERTOU! 🎯' : 'ERROU... 📉'}
-                      </div>
-                      
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="h-px flex-1 bg-border" />
-                          <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Explicação Detalhada</span>
-                          <div className="h-px flex-1 bg-border" />
-                        </div>
-                        
-                        <div className="space-y-2">
-                          {Object.entries(currentQuestion.explicacoes).map(([key, text]: any) => (
-                            <div key={key} className={cn(
-                              "p-3 rounded-xl text-[11px] leading-relaxed",
-                              key === String.fromCharCode(65 + currentQuestion.gabarito) 
-                                ? "bg-green-500/10 border border-green-500/20 text-green-600 font-medium" 
-                                : "bg-surface border border-border text-muted-foreground opacity-80"
-                            )}>
-                              <span className="font-black mr-2">{key}:</span> {text}
-                            </div>
-                          ))}
-                        </div>
-
-                        <div className="grid grid-cols-1 gap-3">
-                          <div className="bg-blue-500/5 p-4 rounded-2xl border border-blue-500/10">
-                            <div className="flex justify-between items-start mb-2">
-                              <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500">
-                                  <BookOpen size={14} />
-                                </div>
-                                <div className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Conceito Base</div>
-                              </div>
-                            </div>
-                            <p className="text-[11px] leading-relaxed text-foreground/80">{currentQuestion.conceito}</p>
-                          </div>
-
-                          <div className="bg-amber-500/5 p-4 rounded-2xl border border-amber-500/10">
-                            <div className="flex justify-between items-start mb-2">
-                              <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500">
-                                  <Lightbulb size={14} />
-                                </div>
-                                <div className="text-[10px] font-black text-amber-500 uppercase tracking-widest">Como não errar</div>
-                              </div>
-                            </div>
-                            <p className="text-[11px] leading-relaxed text-foreground/80">{currentQuestion.comoNaoErrar}</p>
-                          </div>
-
-                          <div className="bg-purple-500/5 p-4 rounded-2xl border border-purple-500/10">
-                            <div className="flex justify-between items-start mb-2">
-                              <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-500">
-                                  <Zap size={14} />
-                                </div>
-                                <div className="text-[10px] font-black text-purple-500 uppercase tracking-widest">O que o ENEM cobra</div>
-                              </div>
-                            </div>
-                            <p className="text-[11px] leading-relaxed text-foreground/80">{currentQuestion.oQueCobra}</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <button 
-                        onClick={() => setCurrentQuestion(null)}
-                        className="w-full bg-foreground text-bg font-display font-bold py-4 rounded-2xl active:scale-95 transition-all"
-                      >
-                        Próxima Questão
-                      </button>
-                    </motion.div>
-                  )}
-                </div>
-              )}
-            </motion.div>
-          )}
-
           {activeSection === 'config' && (
             <motion.div 
               key="config"
@@ -1510,77 +537,54 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="neo-card p-6 space-y-4">
-                <h4 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground px-2">Compartilhar & Convite</h4>
-                <button 
-                  onClick={handleShare}
-                  className="w-full flex items-center justify-between p-5 bg-surface rounded-3xl border border-border hover:border-tab-l transition-all group"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-2xl bg-tab-l/10 flex items-center justify-center text-tab-l group-hover:scale-110 transition-transform">
-                      <Share2 size={20} />
+              <div className="space-y-4">
+                <div className="flex items-center justify-between px-2">
+                  <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Histórico de Erros</h3>
+                </div>
+
+                <div className="relative">
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input 
+                    type="text" 
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    placeholder="Buscar erro..."
+                    className="w-full bg-surface border border-border rounded-2xl pl-10 pr-4 py-3 text-sm outline-none focus:border-tab-l transition-all"
+                  />
+                </div>
+
+                <div className="space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar pr-1">
+                  {filteredErrors.map(error => (
+                    <div key={error.id} className={cn(
+                      "bg-surface border border-border rounded-2xl p-4 flex items-center gap-4",
+                      error.resolved && "opacity-40 grayscale"
+                    )}>
+                      <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center font-display font-black text-sm", `bg-tab-${error.tab.toLowerCase()}/10 text-tab-${error.tab.toLowerCase()}`)}>
+                        {error.tab}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-xs truncate">{error.materia}</div>
+                        <div className="text-[9px] text-muted-foreground truncate">{error.questao || 'Sem ID'}</div>
+                      </div>
+                      <div className="flex gap-1">
+                        <button onClick={() => handleToggleResolve(error.id)} className="p-2 text-muted-foreground">
+                          <CheckCircle2 size={18} className={error.resolved ? 'text-green-500' : ''} />
+                        </button>
+                        <button onClick={() => handleDelete(error.id)} className="p-2 text-muted-foreground">
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
                     </div>
-                    <div className="text-left">
-                      <div className="text-sm font-bold">Convidar Amigos</div>
-                      <div className="text-[10px] text-muted-foreground">Compartilhe o Memoris</div>
-                    </div>
-                  </div>
-                  <ChevronRight size={18} className="text-muted-foreground" />
-                </button>
+                  ))}
+                </div>
               </div>
 
               <div className="space-y-3">
-                <div className="bg-surface-2 border border-border rounded-3xl p-6 space-y-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-tab-l/10 flex items-center justify-center text-tab-l">
-                      <Key size={20} />
-                    </div>
-                    <div>
-                      <div className="text-[11px] font-bold">Chave de API Gemini</div>
-                      <div className="text-[9px] text-muted-foreground">
-                        {hasApiKey ? "Chave configurada e ativa" : "Nenhuma chave configurada"}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <input 
-                      type="password"
-                      value={manualApiKey}
-                      onChange={(e) => setManualApiKey(e.target.value)}
-                      placeholder="Cole sua chave aqui (AI_...)"
-                      className="w-full bg-surface border border-border rounded-xl p-3 text-xs outline-none focus:border-tab-l"
-                    />
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={saveManualKey}
-                        className="flex-1 bg-tab-l text-white font-black text-[10px] py-3 rounded-xl uppercase tracking-widest"
-                      >
-                        Salvar Chave
-                      </button>
-                      {hasApiKey && (
-                        <button 
-                          onClick={testKey}
-                          disabled={isTestingKey}
-                          className="flex-1 bg-surface border border-border text-foreground font-black text-[10px] py-3 rounded-xl uppercase tracking-widest disabled:opacity-50"
-                        >
-                          {isTestingKey ? "..." : "Testar"}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  
-                  <p className="text-[8px] text-muted-foreground text-center leading-tight">
-                    Obtenha sua chave grátis em <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-tab-l underline">Google AI Studio</a>.
-                  </p>
-                </div>
-
                 <button 
                   onClick={() => {
                     if (confirm('Apagar todos os dados?')) {
                       setErrors([]);
                       setStreak({ streak: 0, lastDate: '' });
-                      setPraticaHist([]);
                       localStorage.clear();
                     }
                   }}
@@ -1600,11 +604,9 @@ export default function App() {
       </main>
 
       <nav className="fixed bottom-0 left-0 right-0 bg-bg/80 backdrop-blur-2xl border-t border-border flex justify-around px-2 pt-2 pb-safe-bottom z-40">
-        <NavButton active={activeSection === 'registrar'} onClick={() => setActiveSection('registrar')} icon={<LayoutGrid size={22} />} label="Início" />
-        <NavButton active={activeSection === 'revisao'} onClick={() => setActiveSection('revisao')} icon={<RotateCcw size={22} />} label="Memoris" badge={dueErrors.length} />
-        <NavButton active={activeSection === 'lista'} onClick={() => setActiveSection('lista')} icon={<List size={22} />} label="Erros" />
-        <NavButton active={activeSection === 'pratica'} onClick={() => setActiveSection('pratica')} icon={<Target size={22} />} label="Prática" />
-        <NavButton active={activeSection === 'config'} onClick={() => setActiveSection('config')} icon={<Settings size={22} />} label="Mais" />
+        <NavButton active={activeSection === 'registrar'} onClick={() => setActiveSection('registrar')} icon={<PlusCircle size={22} />} label="Início" />
+        <NavButton active={activeSection === 'revisao'} onClick={() => setActiveSection('revisao')} icon={<RotateCcw size={22} />} label="Revisar" badge={dueErrors.length} />
+        <NavButton active={activeSection === 'config'} onClick={() => setActiveSection('config')} icon={<Settings size={22} />} label="Ajustes" />
       </nav>
     </div>
   );
